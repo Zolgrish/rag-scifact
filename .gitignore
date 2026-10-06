@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local env/secrets
+.env
+
+# Runtime outputs
+logs/*
+!logs/.gitkeep
+indexes/*
+!indexes/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+models/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+data/
+AGENTS.md
+specs/

@@ -1,0 +1,49 @@
+project:
+  name: rag-scifact
+  seed: 42
+
+paths:
+  corpus: data/scifact/corpus.jsonl
+  queries: data/scifact/queries.jsonl
+  qrels_train: data/scifact/qrels/train.tsv
+  qrels_test: data/scifact/qrels/test.tsv
+  fixture_corpus: data/fixtures/atlas.jsonl
+  index_dir: indexes
+  log_dir: logs
+  artifact_dir: artifacts
+
+embedding:
+  model_id: sentence-transformers/all-MiniLM-L6-v2
+  chunk_size_tokens: 220
+  chunk_overlap_tokens: 30
+  normalize: true
+  dtype: float32
+
+retrieval:
+  mode: dense
+  top_k: 5
+  max_top_k: 10
+
+llm:
+  provider: local_openai_compatible
+  runtime: ollama
+  runtime_version: "0.24.0"
+  reference_model_id: mistralai/Ministral-3-3B-Instruct-2512-BF16
+  model_id: ministral-3:3b-instruct-2512-q8_0
+  revision: ""
+  runtime_model_digest: c269e5748d11
+  base_url: http://127.0.0.1:11434/v1
+  context_length: 32768
+  temperature: 0
+  max_new_tokens: 512
+  seed: 42
+  dtype: ""
+  quantization: Q8_0
+  device: NVIDIA GeForce RTX 5070
+  connect_timeout_s: 10
+  read_timeout_s: 120
+  runtime_profile_locked: false
+
+logging:
+  level: INFO
+  filename_prefix: rag-scifact
