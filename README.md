@@ -9,7 +9,7 @@ This repository implements the DFM-ENGINEERING SciFact RAG exercise with:
 
 ## Current status
 
-E0 and E1 are implemented on the final Admin machine.
+E0, E1 and E2 are implemented on the final Admin machine.
 
 E1 now includes:
 
@@ -22,7 +22,9 @@ E1 now includes:
 - section-preserving reproducibility manifest merge
 - per-run E1 artifacts and logging
 
-E2-E7 are not implemented yet. build-index, retrieve, ask, evaluate, and
+E2 provides source-preserving MiniLM token windows and a normalized embedding
+wrapper, validated with the real model and the full corpus. E3-E7 are not
+implemented yet. build-index, retrieve, ask, evaluate, and
 evaluate-generation remain scaffold commands until their owning epics are done.
 
 ## Final benchmark/demo machine
@@ -373,6 +375,43 @@ Include that manifest separately in the final delivery bundle.
 
 If a manifest already records final_test_frozen=true, a later audit may only merge it when the repository is still on the same recorded Git commit and the working tree is clean. Dirty state, a different commit, or an invalid frozen identity is rejected instead of silently retaining the frozen flag.
 
+## E2 - MiniLM chunking and embedding
+
+Construct one shared runtime for corpus and queries:
+
+~~~python
+from app.config import load_config
+from app.loader import load_corpus
+from app.embedder import MiniLMEmbedder
+from app.chunker import MiniLMChunker
+
+config = load_config()
+embedder = MiniLMEmbedder(config.embedding, device="cpu")
+chunker = MiniLMChunker.from_embedder(embedder)
+document = next(iter(load_corpus(config.paths.corpus).values()))
+chunks = chunker.chunk_document(document)
+vectors = embedder.encode_chunks(chunks)  # (N, 384), normalized float32
+query_vector = embedder.encode_query("A scientific question")  # (384,)
+~~~
+
+Use `local_files_only=True` and, if needed, `cache_folder=...` to reuse a local
+exact-model cache. Construction loads the model; module imports do not.
+Routine tests use injected runtimes and need no public network access.
+
+Body windows are chosen only at stable MiniLM WordPiece word boundaries. Each exact source substring is retokenized and verified to match the original document token slice, so the standalone body is never more than 220 MiniLM tokens. Adjacent chunks are selected so the last 30 standalone token IDs of the left chunk exactly equal the first 30 token IDs of the right chunk.\nIDs are `<doc_id>:<token_start>-<token_end>`, with half-open token and character\nspans. Evidence is exactly `document.text[char_start:char_end]`; no tokenizer\ndecoding reconstructs it. Empty/whitespace-only bodies produce zero chunks.\n\nEmbedding text is `embedding_title + "\n\n" + chunk.text`, or only the body
+when the embedding title is empty. The original title remains in metadata.
+If the actual combined input exceeds the runtime limit, the chunker retains a
+source title prefix ending at a title-token offset, reducing it until the
+actual combined tokenization (including special tokens) fits. The body source
+span is preserved. Each truncation logs document ID, original/retained title
+token counts, input limit and body token count. Oversized embedding inputs are
+rejected instead of being silently truncated by SentenceTransformer.
+
+Observed validation on 2026-10-06 with the exact pinned all-MiniLM-L6-v2 runtime:\n\n| Full-corpus check | Result |\n| --- | ---: |\n| Documents / chunks | 5,183 / 10,359 |\n| Standalone body tokens, min / max | 31 / 220 |\n| Chunks over 220 | 0 |\n| Actual 30-token overlap violations | 0 |\n| Source-slice token identity violations | 0 |\n| Duplicate IDs / empty bodies | 0 / 0 |\n| Title truncations (per chunk) | 546 |\n| Maximum actual embedding input / effective runtime limit | 256 / 256 |\n\nThe pinned Hugging Face revision is:\n\n```text\n1110a243fdf4706b3f48f1d95db1a4f5529b4d41\n```\n\nThe real CPU smoke encoded 16 corpus chunks into `(16, 384)` finite float32 vectors; norms ranged from 0.9999999404 to 1.0. Single versus batch maximum absolute difference was 5.96e-8. The cached validation rerun uses local_files_only=True with the pinned revision. Observed counts are validation results, not constants in application logic. Generated reports/logs and the exact-model cache are under `artifacts/e2-validation/` (gitignored).\n\nBoth runtime objects expose `runtime_metadata()` for E3 manifest recording.\nE2 does not modify the E1 manifest, its freeze guards, or index status. FAISS/index building remains an E3 boundary.\n\nE2 code and tests were produced with Codex assistance. They use existing
+SentenceTransformer, Transformers/tokenizers, PyTorch and NumPy libraries;
+no model was trained or fine-tuned. Future human changes should be disclosed
+in the delivery report alongside this assistance.
+
 ## Tests
 
 ~~~powershell
@@ -388,7 +427,7 @@ real-data counts/hashes, overlap policy, and manifest merge/conflict behavior.
 
 ## Commands not implemented yet
 
-These remain scaffold commands until E2-E7 are implemented:
+These remain scaffold commands until their E3-E7 epics are implemented:
 
 ~~~powershell
 python -m scripts.build_index --config config.yaml
