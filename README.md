@@ -1,31 +1,64 @@
 # RAG SciFact - Local Ministral
 
-Project th?c h?nh RAG tr?n SciFact BEIR. Baseline d?ng `sentence-transformers/all-MiniLM-L6-v2`, FAISS `IndexFlatIP`, v? local Ministral 3 3B Instruct.
+This repository implements the DFM-ENGINEERING SciFact RAG exercise with:
 
-## Tr?ng th?i hi?n t?i
+- sentence-transformers/all-MiniLM-L6-v2 for embeddings
+- FAISS IndexFlatIP for dense retrieval
+- local Ministral 3 3B Instruct for generation
+- Windows 11 + NVIDIA GeForce RTX 5070 as the final benchmark/demo machine
 
-Repository ?ang ? cu?i E0 v? m?i tr??ng/project skeleton. M?i tr??ng cu?i ?? ???c c?i v? verify tr?n ch?nh m?y benchmark/demo n?y; E1-E7 v?n ch?a ???c tri?n khai v? c?c CLI `build-index`, `retrieve`, `ask`, `evaluate`, `evaluate-generation` hi?n v?n l? scaffold.
+## Current status
 
-### M?y benchmark/demo cu?i
+E0 and E1 are implemented on the final Admin machine.
 
-- Windows 11 x64, user ch?y project: `Admin`
-- NVIDIA GeForce RTX 5070, PyTorch th?y kho?ng 11.94 GiB VRAM
-- Python `.venv`: 3.11.9
+E1 now includes:
+
+- strict reusable SciFact corpus/query/qrels loaders
+- runtime-safe query objects that expose query ID + text only
+- dataset count/reference/duplicate/malformed-record validation
+- SHA256 hashes for all four SciFact source files
+- deterministic Random(42) dev/practice split
+- exact and near-duplicate cross-split integrity audit
+- section-preserving reproducibility manifest merge
+- per-run E1 artifacts and logging
+
+E2-E7 are not implemented yet. build-index, retrieve, ask, evaluate, and
+evaluate-generation remain scaffold commands until their owning epics are done.
+
+## Final benchmark/demo machine
+
+Verified profile:
+
+- Windows 11 x64, project user/profile: Admin
+- Python .venv: 3.11.9
+- NVIDIA GeForce RTX 5070
 - PyTorch: 2.11.0+cu128
-- CUDA runtime c?a PyTorch: 12.8
+- PyTorch CUDA runtime: 12.8
+- torch.cuda.is_available(): true
+- PyTorch-reported VRAM: 11.94 GiB
 - Ollama: 0.24.0
-- Local model: `ministral-3:3b-instruct-2512-q8_0`
-- Ollama model ID/digest: `c269e5748d11`
-- Quantization: `Q8_0`
-- Ollama API: `http://127.0.0.1:11434/v1`
-- Runtime context quan s?t b?ng `ollama ps`: 32768 tokens
-- `ollama ps` ?? x?c nh?n model ch?y `100% GPU`; API `/v1/chat/completions` ?? tr? response h?p l?
+- model: ministral-3:3b-instruct-2512-q8_0
+- Ollama model ID/digest: c269e5748d11
+- quantization: Q8_0
+- local OpenAI-compatible API: http://127.0.0.1:11434/v1
+- observed Ollama runtime context: 32768 tokens
+- Ollama processor placement: 100% GPU
+- local /v1/chat/completions smoke test: PASS
 
-Model backlog tham chi?u v?n l? `mistralai/Ministral-3-3B-Instruct-2512-BF16`. V? BF16 c? th? v??t VRAM 12 GB, profile demo ?? verify d?ng c?ng family/model 3B Instruct 2512 nh?ng ? Q8_0. ??y l? thay ??i runtime/quantization, kh?ng ??i model family.
+The backlog reference remains mistralai/Ministral-3-3B-Instruct-2512-BF16.
+The final demo profile uses the same Ministral 3 3B Instruct 2512 family/model
+through Ollama in Q8_0 because the reference BF16 profile may exceed 12 GB VRAM.
 
-## C?u tr?c project
+LLM_REVISION is intentionally blank because the Ollama digest is not a
+Hugging Face/upstream revision. The Ollama digest is recorded separately as
+LLM_RUNTIME_MODEL_DIGEST.
 
-```text
+runtime_profile_locked remains false until E4 implements and verifies the
+concrete Generator client, readiness/error mapping, and final runtime manifest.
+
+## Repository layout
+
+~~~text
 rag-scifact/
   AGENTS.md
   README.md
@@ -40,6 +73,8 @@ rag-scifact/
     logging_utils.py
     models.py
     loader.py
+    data_audit.py
+    manifest.py
     chunker.py
     embedder.py
     indexer.py
@@ -53,6 +88,7 @@ rag-scifact/
   scripts/
     _common.py
     check_environment.py
+    audit_dataset.py
     build_index.py
     retrieve.py
     ask.py
@@ -66,68 +102,79 @@ rag-scifact/
   artifacts/
   tests/
   specs/
-```
+~~~
 
-## D?ng m?i tr??ng hi?n t?i tr?n m?y Admin
+## Use the existing Admin environment
 
-```powershell
+~~~powershell
 cd D:\rag-scifact
 .\.venv\Scripts\Activate.ps1
 python --version
 python -m scripts.check_environment
 pytest -q
-```
+~~~
 
-Python ph?i l? 3.11.x v? `torch.cuda.is_available()` ph?i l? `true`.
+Expected baseline:
 
-## T?o l?i m?i tr??ng s?ch
+~~~text
+Python 3.11.x
+CUDA available: true
+GPU: NVIDIA GeForce RTX 5070
+~~~
 
-Python 3.11 l? baseline b?t bu?c:
+## Reproduce a clean environment
 
-```powershell
+Python 3.11 is required.
+
+~~~powershell
 cd D:\rag-scifact
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.lock.txt
-```
+~~~
 
-`requirements.lock.txt` l? snapshot ch?nh x?c c?a m?i tr??ng ?? verify v? c? th?m PyTorch CUDA 12.8 index ?? wheel `torch==2.11.0+cu128` c? th? ???c resolve. `requirements.txt` v? `requirements-dev.txt` v?n l? manifest theo kho?ng version d?nh cho ph?t tri?n; benchmark/final reproduction ?u ti?n lockfile.
+requirements.lock.txt is the exact snapshot of the verified environment and
+includes the PyTorch CUDA 12.8 wheel index required to resolve
+torch==2.11.0+cu128.
 
-Sau khi c?i:
+After install:
 
-```powershell
+~~~powershell
 python -m scripts.check_environment
 python -m unittest discover -s tests -v
 pytest -q
 python -m pip check
-```
+~~~
 
-## Ollama / Ministral tr?n m?y n?y
+requirements.txt and requirements-dev.txt remain broader development manifests.
+Use requirements.lock.txt for benchmark/final reproduction.
 
-M?y Admin ?? c? Ollama v? model. Ki?m tra:
+## Ollama / Ministral
 
-```powershell
+Check the local runtime:
+
+~~~powershell
 ollama --version
 ollama list
 ollama ps
-```
+~~~
 
-N?u d?ng l?i tr?n m?y s?ch, t?i ??ng profile ?? verify:
+On a fresh compatible machine, obtain the verified profile with:
 
-```powershell
+~~~powershell
 ollama pull ministral-3:3b-instruct-2512-q8_0
-```
+~~~
 
-Ollama t? ph?c v? local API tr?n port 11434. Project d?ng OpenAI-compatible endpoint:
+Ollama serves the local OpenAI-compatible API at:
 
-```text
+~~~text
 http://127.0.0.1:11434/v1
-```
+~~~
 
-Test tr?c ti?p:
+Example smoke request:
 
-```powershell
+~~~powershell
 $body = @{
     model = "ministral-3:3b-instruct-2512-q8_0"
     messages = @(@{ role = "user"; content = "Reply with exactly: OK" })
@@ -135,28 +182,25 @@ $body = @{
     max_tokens = 512
 } | ConvertTo-Json -Depth 5
 
-Invoke-RestMethod `
-    -Uri "http://127.0.0.1:11434/v1/chat/completions" `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $body
-```
+Invoke-RestMethod -Uri "http://127.0.0.1:11434/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+~~~
 
-Kh?ng d?ng cloud LLM fallback cho benchmark.
+There is no cloud-LLM fallback for benchmark generation.
 
-## C?u h?nh local
+## Local configuration
 
-`.env.example` ch?a profile ?? verify nh?ng kh?ng ch?a secret. T?o `.env` khi c?n override local:
+.env.example contains the verified non-secret profile. Copy it only when local
+overrides are needed:
 
-```powershell
+~~~powershell
 Copy-Item .env.example .env
-```
+~~~
 
-`.env` b? gitignore v? kh?ng ???c commit.
+.env is gitignored and must not be committed.
 
-C?c gi? tr? runtime hi?n t?i:
+Current LLM profile:
 
-```dotenv
+~~~dotenv
 LLM_PROVIDER=local_openai_compatible
 LLM_RUNTIME=ollama
 LLM_RUNTIME_VERSION=0.24.0
@@ -173,58 +217,185 @@ LLM_DTYPE=
 LLM_QUANTIZATION=Q8_0
 LLM_DEVICE=NVIDIA GeForce RTX 5070
 LLM_RUNTIME_PROFILE_LOCKED=false
-```
+~~~
 
-`LLM_REVISION` ?? tr?ng v? Ollama digest kh?ng ph?i Hugging Face revision. `LLM_DTYPE` c?ng ?? tr?ng cho ??n khi runtime cung c?p m?t compute dtype ?? r? ?? ghi ch?nh x?c. `runtime_profile_locked=false` cho ??n khi E4 concrete generator, health/error mapping v? manifest ???c ho?n t?t; hardware/runtime smoke test th? ?? pass.
-
-## Baseline benchmark
+## Benchmark baseline
 
 - seed = 42
-- embedding = `sentence-transformers/all-MiniLM-L6-v2`
+- embedding = sentence-transformers/all-MiniLM-L6-v2
 - embedding dimension = 384
-- normalized float32
-- chunk body = t?i ?a 220 MiniLM tokenizer tokens
-- overlap = 30 tokens
-- dense index = FAISS `IndexFlatIP`
-- Top-K m?c ??nh = 5
+- embedding vectors = normalized float32
+- chunk body maximum = 220 MiniLM tokenizer tokens
+- overlap = 30 MiniLM tokenizer tokens
+- dense index = FAISS IndexFlatIP
+- default Top-K = 5
 - generation temperature = 0
 - generation output limit = 512 new tokens
-- local model = Ministral 3 3B Instruct 2512 Q8_0 qua Ollama
+- local generator family = Ministral 3 3B Instruct 2512
 
-## Dataset hi?n c?
+## E1 - Dataset audit and deterministic split
 
-C?c file SciFact ?? c? trong `data/scifact/`:
+Run:
 
-```text
-corpus.jsonl                5,183 documents
-queries.jsonl               1,109 queries
-qrels/train.tsv             809 unique query IDs
-qrels/test.tsv              300 unique query IDs
-```
+~~~powershell
+python -m scripts.audit_dataset --config config.yaml
+~~~
 
-E1 s? th?c hi?n audit/hash, deterministic dev/practice split, duplicate/near-duplicate report v? t?o manifest. Kh?ng tune theo final test.
+The E1 command:
 
-## Test E0
+- strictly validates corpus.jsonl, queries.jsonl, qrels/train.tsv and qrels/test.tsv
+- preserves IDs as strings internally
+- reports malformed data with file/line context
+- rejects duplicate IDs and duplicate qrel query/document pairs
+- validates every qrel query/document reference
+- preserves multiple relevant documents per query
+- never exposes source query metadata to the runtime query object
+- validates the canonical SciFact counts
+- requires qrels headers to be exactly query-id / corpus-id / score in that order
+- rejects blank qrels rows and any qrels data row that does not contain exactly three tab-separated fields
+- validates the four canonical raw-byte SHA256 hashes, not just counts
+- creates the required Random(42) split from every unique query ID present in train qrels: 100 dev + 709 practice
+- rejects project/config seed values other than 42
+- audits exact/near duplicate query text across practice/dev/test
+- writes artifacts/manifest.json
+- writes per-run artifacts under artifacts/<run_id>/
 
-Hi?n c? c?c smoke test cho import/config/logging. Tr?n m?i tr??ng Admin ?? verify:
+Canonical current counts:
 
-```powershell
+~~~text
+corpus documents        5183
+queries                 1109
+train query IDs          809
+test query IDs           300
+train qrel rows          919
+test qrel rows           339
+dev                      100
+practice                 709
+~~~
+
+Current file SHA256 values:
+
+~~~text
+corpus.jsonl
+dec31c8182f3d744c7d2c09423756fd1d17cbef75808db13ba01cc0aab4d1ac6
+
+queries.jsonl
+8ff84a7c903f722981cd8d595c022660140c51867b27608a6d4910db86080313
+
+qrels/train.tsv
+a53f2114831916c096b6c37d9e54da68cef4efdcdbd5ed46533601af972acf1d
+
+qrels/test.tsv
+0864bb985e0ca2367ba217977e72004d549054b2b06666ed9d4825ac7c21284c
+~~~
+
+### Exact / near-duplicate audit policy
+
+Policy version: query_overlap_v1.
+
+Exact canonical normalization:
+
+- Unicode NFKC
+- casefold
+- whitespace collapse
+- punctuation and numbers remain significant
+
+Near-duplicate policy:
+
+- cross-split pairs only
+- canonical-exact pairs are excluded from near count
+- Unicode NFKC + casefold word tokens
+- maximum token count must be at least 5
+- token-level Levenshtein distance
+- maximum distance = max(1, floor(0.10 * max_token_count))
+- no stemming
+- no stopword removal
+- no semantic embeddings
+
+The policy was fixed before benchmark tuning. Final-test overlaps are reporting
+only and must never be used to tune retrieval, prompts, thresholds, model
+selection, query removal, split membership, or evaluation denominators.
+
+Current aggregate result:
+
+~~~text
+pairs compared            313600
+raw exact pairs                2
+canonical exact pairs          2
+near duplicate pairs          98
+
+practice vs dev near          25
+practice vs test near         66
+dev vs test near               7
+~~~
+
+The artifact intentionally reports aggregate overlap counts only. It does not
+publish final-test query text or IDs.
+
+## E1 artifacts
+
+Canonical manifest:
+
+~~~text
+artifacts/manifest.json
+~~~
+
+Each run also writes:
+
+~~~text
+artifacts/<run_id>/
+  dataset_audit.json
+  manifest.json
+  config.snapshot.yaml
+~~~
+
+The manifest stores:
+
+- git commit and dirty state
+- dataset counts and SHA256 hashes
+- seed 42
+- all 100 dev IDs
+- all 709 practice IDs
+- aggregate query-overlap audit policy/results
+- known E0 runtime/hardware metadata
+- placeholders for later E2-E7 sections
+
+E1 manifest updates are conflict-safe: an existing manifest with different
+dataset hashes or split identity is rejected instead of silently overwritten.
+Unrelated later-stage manifest sections are preserved.
+
+The artifacts/ directory is intentionally gitignored. artifacts/manifest.json
+is therefore a generated delivery artifact, not a tracked source file. For a
+freeze, commit source/config first, make sure the working tree is clean, then
+rerun python -m scripts.audit_dataset --config config.yaml. The generated
+manifest should then record the frozen source commit with git_dirty=false.
+Include that manifest separately in the final delivery bundle.
+
+If a manifest already records final_test_frozen=true, a later audit may only merge it when the repository is still on the same recorded Git commit and the working tree is clean. Dirty state, a different commit, or an invalid frozen identity is rejected instead of silently retaining the frozen flag.
+
+## Tests
+
+~~~powershell
 python -m unittest discover -s tests -v
 pytest -q
 python -m compileall -q app scripts tests
 python -m pip check
-```
+~~~
 
-## C?c CLI ch?a tri?n khai
+E1 tests cover strict loading, malformed records, duplicate IDs, qrel reference
+validation, multi-document relevance, metadata isolation, deterministic split,
+real-data counts/hashes, overlap policy, and manifest merge/conflict behavior.
 
-C?c command sau ?? c? parser/boundary nh?ng ch?a ch?y pipeline th?t cho t?i khi E1-E7 ???c tri?n khai:
+## Commands not implemented yet
 
-```powershell
+These remain scaffold commands until E2-E7 are implemented:
+
+~~~powershell
 python -m scripts.build_index --config config.yaml
 python -m scripts.retrieve --query "..." --top-k 5
 python -m scripts.ask --query "..." --top-k 5
 python -m scripts.evaluate --split dev --config config.yaml
 python -m scripts.evaluate_generation --fixture data/fixtures/atlas.jsonl
-```
+~~~
 
-Kh?ng coi output scaffold l? benchmark result.
+Do not treat scaffold output as a benchmark result.
