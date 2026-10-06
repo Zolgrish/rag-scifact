@@ -9,7 +9,7 @@ This repository implements the DFM-ENGINEERING SciFact RAG exercise with:
 
 ## Current status
 
-E0, E1 and E2 are implemented on the final Admin machine.
+E0, E1, E2 and E3 are implemented on the final Admin machine.
 
 E1 now includes:
 
@@ -23,9 +23,9 @@ E1 now includes:
 - per-run E1 artifacts and logging
 
 E2 provides source-preserving MiniLM token windows and a normalized embedding
-wrapper, validated with the real model and the full corpus. E3-E7 are not
-implemented yet. build-index, retrieve, ask, evaluate, and
-evaluate-generation remain scaffold commands until their owning epics are done.
+wrapper, validated with the real model and the full corpus. E3 adds a validated,
+reloadable FAISS bundle and dense document retrieval. E4-E7 remain pending:
+ask, evaluate and evaluate-generation are still scaffold commands.
 
 ## Final benchmark/demo machine
 
@@ -398,7 +398,17 @@ Use `local_files_only=True` and, if needed, `cache_folder=...` to reuse a local
 exact-model cache. Construction loads the model; module imports do not.
 Routine tests use injected runtimes and need no public network access.
 
-Body windows are chosen only at stable MiniLM WordPiece word boundaries. Each exact source substring is retokenized and verified to match the original document token slice, so the standalone body is never more than 220 MiniLM tokens. Adjacent chunks are selected so the last 30 standalone token IDs of the left chunk exactly equal the first 30 token IDs of the right chunk.\nIDs are `<doc_id>:<token_start>-<token_end>`, with half-open token and character\nspans. Evidence is exactly `document.text[char_start:char_end]`; no tokenizer\ndecoding reconstructs it. Empty/whitespace-only bodies produce zero chunks.\n\nEmbedding text is `embedding_title + "\n\n" + chunk.text`, or only the body
+Body windows are chosen only at stable MiniLM WordPiece word boundaries. Each
+exact source substring is retokenized and verified to match the original document
+token slice, so the standalone body is never more than 220 MiniLM tokens. Adjacent
+chunks are selected so the last 30 standalone token IDs of the left chunk exactly
+equal the first 30 token IDs of the right chunk.
+
+IDs are `<doc_id>:<token_start>-<token_end>`, with half-open token and character
+spans. Evidence is exactly `document.text[char_start:char_end]`; no tokenizer
+decoding reconstructs it. Empty/whitespace-only bodies produce zero chunks.
+
+Embedding text is `embedding_title + "\n\n" + chunk.text`, or only the body
 when the embedding title is empty. The original title remains in metadata.
 If the actual combined input exceeds the runtime limit, the chunker retains a
 source title prefix ending at a title-token offset, reducing it until the
@@ -407,10 +417,149 @@ span is preserved. Each truncation logs document ID, original/retained title
 token counts, input limit and body token count. Oversized embedding inputs are
 rejected instead of being silently truncated by SentenceTransformer.
 
-Observed validation on 2026-10-06 with the exact pinned all-MiniLM-L6-v2 runtime:\n\n| Full-corpus check | Result |\n| --- | ---: |\n| Documents / chunks | 5,183 / 10,359 |\n| Standalone body tokens, min / max | 31 / 220 |\n| Chunks over 220 | 0 |\n| Actual 30-token overlap violations | 0 |\n| Source-slice token identity violations | 0 |\n| Duplicate IDs / empty bodies | 0 / 0 |\n| Title truncations (per chunk) | 546 |\n| Maximum actual embedding input / effective runtime limit | 256 / 256 |\n\nThe pinned Hugging Face revision is:\n\n```text\n1110a243fdf4706b3f48f1d95db1a4f5529b4d41\n```\n\nThe real CPU smoke encoded 16 corpus chunks into `(16, 384)` finite float32 vectors; norms ranged from 0.9999999404 to 1.0. Single versus batch maximum absolute difference was 5.96e-8. The cached validation rerun uses local_files_only=True with the pinned revision. Observed counts are validation results, not constants in application logic. Generated reports/logs and the exact-model cache are under `artifacts/e2-validation/` (gitignored).\n\nBoth runtime objects expose `runtime_metadata()` for E3 manifest recording.\nE2 does not modify the E1 manifest, its freeze guards, or index status. FAISS/index building remains an E3 boundary.\n\nE2 code and tests were produced with Codex assistance. They use existing
+Observed validation on 2026-10-06 with the exact pinned all-MiniLM-L6-v2 runtime:
+
+| Full-corpus check | Result |
+| --- | ---: |
+| Documents / chunks | 5,183 / 10,359 |
+| Standalone body tokens, min / max | 31 / 220 |
+| Chunks over 220 | 0 |
+| Actual 30-token overlap violations | 0 |
+| Source-slice token identity violations | 0 |
+| Duplicate IDs / empty bodies | 0 / 0 |
+| Title truncations (per chunk) | 546 |
+| Maximum actual embedding input / effective runtime limit | 256 / 256 |
+
+The pinned Hugging Face revision is:
+
+```text
+1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+```
+
+The real CPU smoke encoded 16 corpus chunks into `(16, 384)` finite float32
+vectors; norms ranged from 0.9999999404 to 1.0. Single versus batch maximum
+absolute difference was 5.96e-8. The cached validation rerun uses
+local_files_only=True with the pinned revision. Observed counts are validation
+results, not constants in application logic. Generated reports/logs and the
+exact-model cache are under `artifacts/e2-validation/` (gitignored).
+
+Both runtime objects expose `runtime_metadata()` for E3 manifest recording.
+E2 does not modify the E1 manifest, its freeze guards, or index status.
+FAISS/index building belongs to E3 below.
+
+E2 and E3 code and tests were produced with Codex assistance. They use existing
 SentenceTransformer, Transformers/tokenizers, PyTorch and NumPy libraries;
 no model was trained or fine-tuned. Future human changes should be disclosed
-in the delivery report alongside this assistance.
+in the delivery report alongside this assistance. E2 was subsequently changed
+to enforce stable WordPiece boundaries, standalone token identity/overlap checks,
+and the verified pinned embedding revision. E3 uses direct FAISS APIs.
+
+## E3 - Persistent dense index and document retrieval
+
+Build from the full canonical corpus (no queries or qrels enter the build):
+
+~~~powershell
+python -m scripts.build_index --config config.yaml
+~~~
+
+The verified offline build on this machine used the existing E2 cache:
+
+~~~powershell
+python -m scripts.build_index --config config.yaml --cache-folder artifacts/e2-validation/model-cache --local-files-only --device cuda --batch-size 32
+~~~
+
+The model remains `sentence-transformers/all-MiniLM-L6-v2` at revision
+`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`. Batch size/device/cache flags are
+runtime controls; they do not change the benchmark chunk/model contract.
+Canonical corpus JSONL order followed by E2 chunk order determines vector positions.
+
+The default bundle is:
+
+~~~text
+indexes/scifact/
+  index.faiss
+  chunks.jsonl
+  index_manifest.json
+~~~
+
+`chunks.jsonl` contains one UTF-8 row per vector, with contiguous position,
+document/chunk IDs, exact evidence, original/embedding titles, token/character
+spans, body count and title-truncation state. The index manifest records schema,
+UTC timestamp, run ID, IndexFlatIP/inner-product identity, dimension/counts,
+corpus SHA256/count, pinned embedding identity, E2 policies/input limit, build
+device, library versions and both data file hashes/sizes.
+
+Files are staged first and the manifest is published last. Reload checks hashes,
+FAISS type/dimension/count/vectors, mapping alignment, unique IDs and runtime
+compatibility. A missing, partial, corrupt or incompatible bundle fails explicitly.
+The reusable application APIs accept a bundle path; both CLIs offer `--bundle`.
+E3 writes its own bundle manifest and `artifacts/<run_id>/index_build.json` plus
+config snapshot. It leaves `artifacts/manifest.json`, E1 sections and freeze guards
+unchanged; the index bundle manifest is the E3 build record.
+
+Reload directly without constructing MiniLM or reading the corpus:
+
+~~~python
+from app.indexer import load_bundle
+bundle = load_bundle("indexes/scifact")
+print(bundle.index.ntotal, len(bundle.chunks))
+~~~
+
+Retrieve from the existing persisted bundle; only the query is embedded:
+
+~~~powershell
+python -m scripts.retrieve --query "Does physical activity affect cardiovascular health?" --top-k 5
+python -m scripts.retrieve --query-id 0 --top-k 5
+~~~
+
+To reuse the verified cache offline, append
+`--cache-folder artifacts/e2-validation/model-cache --local-files-only --device cuda`
+to either retrieval command. `--query` and `--query-id` are mutually exclusive.
+ID lookup uses the original query text through the runtime-safe loader, without
+qrels or gold metadata. JSON results go to stdout; diagnostics/logs go to stderr.
+
+E3 supports `retrieval.mode: dense` only; both build and retrieval CLIs reject
+other configured modes instead of silently running dense behavior. When
+`--top-k` is omitted, retrieval uses `retrieval.top_k` from the loaded config.
+An explicit `--top-k` overrides that default but must remain within
+`1..retrieval.max_top_k`; `max_top_k` itself is validated against the benchmark
+hard cap of 10. The trimmed query must be 1..2000 characters.
+
+The retriever begins with `min(ntotal, max(32, 4 * top_k))` chunk candidates,
+doubles until enough unique documents are available, and completes ties at the
+document cutoff. Ordering is score descending, then vector position ascending.
+Each document keeps its highest-scoring chunk, with ranks 1..K. A small valid
+index returns all available unique documents; an empty index is an infrastructure
+error. Scores are retrieval similarities, not correctness probabilities.
+
+Observed full-corpus build on 2026-10-06:
+
+| Check | Result |
+| --- | ---: |
+| Documents / chunks / vectors / FAISS ntotal / mapping rows | 5,183 / 10,359 / 10,359 / 10,359 / 10,359 |
+| Dimension / dtype | 384 / float32 |
+| L2 norm range | 0.9999999404–1.0 |
+| Build device / batch size | cuda:0 (RTX 5070) / 32 |
+| Build duration, including load/chunk/embed/persist/reload | 23.29 seconds |
+| Duplicate chunk IDs | 0 |
+| index.faiss bytes / chunks.jsonl bytes | 15,911,469 / 12,534,746 |
+
+Data SHA256 values for this build:
+
+~~~text
+index.faiss
+cc96c582d39b324a78e6fd7f1ce972bbe7f49b6cae8f062020834fc921d556c7
+chunks.jsonl
+877dd3a648c8b791487ca2a373953e0c4479bf2e2df8440c8d234afb4b583af1
+~~~
+
+Reload reproduced vectors and mapping exactly. Both query ID 0 and the arbitrary
+query above returned five unique documents, continuous ranks, descending scores
+and exact stored evidence. In-memory and reload retrieval results matched.
+Guarded validation confirmed zero corpus loads/embeddings during reload/retrieval.
+Reports/stdout from these checks are under `artifacts/e3-validation/`; build run
+`20261006T083645Z-c85c7abf` has the full report. These are structural checks;
+retrieval metrics and generation remain later work.
 
 ## Tests
 
@@ -427,11 +576,9 @@ real-data counts/hashes, overlap policy, and manifest merge/conflict behavior.
 
 ## Commands not implemented yet
 
-These remain scaffold commands until their E3-E7 epics are implemented:
+These remain scaffold commands until their E4-E7 epics are implemented:
 
 ~~~powershell
-python -m scripts.build_index --config config.yaml
-python -m scripts.retrieve --query "..." --top-k 5
 python -m scripts.ask --query "..." --top-k 5
 python -m scripts.evaluate --split dev --config config.yaml
 python -m scripts.evaluate_generation --fixture data/fixtures/atlas.jsonl

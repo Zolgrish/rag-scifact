@@ -149,6 +149,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
 
     top_k = int(_env("TOP_K", retrieval.get("top_k", 5)))
     max_top_k = int(retrieval.get("max_top_k", 10))
+    if not 1 <= max_top_k <= 10:
+        raise ConfigurationError(
+            f"retrieval.max_top_k must be in range 1..10, got {max_top_k}"
+        )
     if not 1 <= top_k <= max_top_k:
         raise ConfigurationError(
             f"retrieval.top_k must be in range 1..{max_top_k}, got {top_k}"
