@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import math
 import os
 from typing import Any, Mapping
 
@@ -98,7 +99,12 @@ def _env(name: str, default: Any) -> Any:
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"Invalid boolean value: {value!r}")
 
 
 def _load_dotenv_if_available() -> None:
@@ -174,10 +180,37 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     llm_context_length = int(
         _env("LLM_CONTEXT_LENGTH", llm.get("context_length", 32768))
     )
+    llm_temperature = float(
+        _env("LLM_TEMPERATURE", llm.get("temperature", 0))
+    )
+    llm_max_new_tokens = int(
+        _env("LLM_MAX_NEW_TOKENS", llm.get("max_new_tokens", 512))
+    )
+    llm_seed = int(_env("LLM_SEED", llm.get("seed", 42)))
+    llm_connect_timeout_s = float(
+        _env(
+            "LLM_CONNECT_TIMEOUT_S",
+            llm.get("connect_timeout_s", 10),
+        )
+    )
+    llm_read_timeout_s = float(
+        _env("LLM_READ_TIMEOUT_S", llm.get("read_timeout_s", 120))
+    )
     if llm_context_length <= 0:
         raise ConfigurationError("llm.context_length must be > 0")
+    if not math.isfinite(llm_temperature) or llm_temperature < 0:
+        raise ConfigurationError("llm.temperature must be finite and >= 0")
+    if llm_max_new_tokens <= 0:
+        raise ConfigurationError("llm.max_new_tokens must be > 0")
+    if (
+        not math.isfinite(llm_connect_timeout_s)
+        or llm_connect_timeout_s <= 0
+    ):
+        raise ConfigurationError("llm.connect_timeout_s must be finite and > 0")
+    if not math.isfinite(llm_read_timeout_s) or llm_read_timeout_s <= 0:
+        raise ConfigurationError("llm.read_timeout_s must be finite and > 0")
 
-    return AppConfig(
+    config = AppConfig(
         name=str(project.get("name", "rag-scifact")),
         seed=int(project.get("seed", 42)),
         paths=PathsConfig(
@@ -243,27 +276,16 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
                 )
             ),
             context_length=llm_context_length,
-            temperature=float(
-                _env("LLM_TEMPERATURE", llm.get("temperature", 0))
-            ),
-            max_new_tokens=int(
-                _env("LLM_MAX_NEW_TOKENS", llm.get("max_new_tokens", 512))
-            ),
-            seed=int(_env("LLM_SEED", llm.get("seed", 42))),
+            temperature=llm_temperature,
+            max_new_tokens=llm_max_new_tokens,
+            seed=llm_seed,
             dtype=str(_env("LLM_DTYPE", llm.get("dtype", ""))),
             quantization=str(
                 _env("LLM_QUANTIZATION", llm.get("quantization", ""))
             ),
             device=str(_env("LLM_DEVICE", llm.get("device", ""))),
-            connect_timeout_s=float(
-                _env(
-                    "LLM_CONNECT_TIMEOUT_S",
-                    llm.get("connect_timeout_s", 10),
-                )
-            ),
-            read_timeout_s=float(
-                _env("LLM_READ_TIMEOUT_S", llm.get("read_timeout_s", 120))
-            ),
+            connect_timeout_s=llm_connect_timeout_s,
+            read_timeout_s=llm_read_timeout_s,
             runtime_profile_locked=_as_bool(
                 _env(
                     "LLM_RUNTIME_PROFILE_LOCKED",
@@ -278,6 +300,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             ),
         ),
     )
+    return config
 
 
 def ensure_output_directories(config: AppConfig) -> None:
@@ -289,4 +312,3 @@ def ensure_output_directories(config: AppConfig) -> None:
         config.paths.artifact_dir,
     ):
         path.mkdir(parents=True, exist_ok=True)
-

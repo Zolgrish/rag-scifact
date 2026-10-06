@@ -35,7 +35,7 @@ class E0ConfigTests(unittest.TestCase):
         self.assertEqual(config.llm.base_url, "http://127.0.0.1:11434/v1")
         self.assertEqual(config.llm.context_length, 32768)
         self.assertEqual(config.llm.quantization, "Q8_0")
-        self.assertFalse(config.llm.runtime_profile_locked)
+        self.assertTrue(config.llm.runtime_profile_locked)
         self.assertEqual(config.retrieval.mode, "dense")
         self.assertEqual(config.retrieval.max_top_k, 10)
 

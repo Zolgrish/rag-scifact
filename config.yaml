@@ -42,7 +42,9 @@ llm:
   device: NVIDIA GeForce RTX 5070
   connect_timeout_s: 10
   read_timeout_s: 120
-  runtime_profile_locked: false
+  # true enforces the manifest-authoritative profile; set false only to
+  # experiment/verify another profile before an explicit relock.
+  runtime_profile_locked: true
 
 logging:
   level: INFO

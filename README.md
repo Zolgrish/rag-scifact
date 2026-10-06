@@ -9,7 +9,7 @@ This repository implements the DFM-ENGINEERING SciFact RAG exercise with:
 
 ## Current status
 
-E0, E1, E2 and E3 are implemented on the final Admin machine.
+E0, E1, E2, E3 and E4 are implemented on the final Admin machine.
 
 E1 now includes:
 
@@ -24,8 +24,10 @@ E1 now includes:
 
 E2 provides source-preserving MiniLM token windows and a normalized embedding
 wrapper, validated with the real model and the full corpus. E3 adds a validated,
-reloadable FAISS bundle and dense document retrieval. E4-E7 remain pending:
-ask, evaluate and evaluate-generation are still scaffold commands.
+reloadable FAISS bundle and dense document retrieval. E4 adds the concrete
+local Ollama/OpenAI-compatible Generator, readiness, structured infrastructure
+errors, deterministic smoke validation and runtime manifest locking. E5-E7 remain
+pending: ask, evaluate and evaluate-generation are still scaffold commands.
 
 ## Final benchmark/demo machine
 
@@ -55,8 +57,9 @@ LLM_REVISION is intentionally blank because the Ollama digest is not a
 Hugging Face/upstream revision. The Ollama digest is recorded separately as
 LLM_RUNTIME_MODEL_DIGEST.
 
-runtime_profile_locked remains false until E4 implements and verifies the
-concrete Generator client, readiness/error mapping, and final runtime manifest.
+runtime_profile_locked is true after E4 verified the concrete Generator client,
+model readiness, structured failure mapping, deterministic local completion and
+runtime manifest merge on the final Admin machine.
 
 ## Repository layout
 
@@ -182,6 +185,7 @@ $body = @{
     messages = @(@{ role = "user"; content = "Reply with exactly: OK" })
     temperature = 0
     max_tokens = 512
+    seed = 42
 } | ConvertTo-Json -Depth 5
 
 Invoke-RestMethod -Uri "http://127.0.0.1:11434/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
@@ -218,7 +222,7 @@ LLM_SEED=42
 LLM_DTYPE=
 LLM_QUANTIZATION=Q8_0
 LLM_DEVICE=NVIDIA GeForce RTX 5070
-LLM_RUNTIME_PROFILE_LOCKED=false
+LLM_RUNTIME_PROFILE_LOCKED=true
 ~~~
 
 ## Benchmark baseline
@@ -561,6 +565,73 @@ Reports/stdout from these checks are under `artifacts/e3-validation/`; build run
 `20261006T083645Z-c85c7abf` has the full report. These are structural checks;
 retrieval metrics and generation remain later work.
 
+## E4 - Local Ministral runtime
+
+E4 keeps generation behind `app.generator.Generator` and supports only the
+verified local profile for this benchmark: `local_openai_compatible` + Ollama.
+The concrete client rejects non-loopback base URLs and never falls back to a
+cloud provider or a different model. The response model ID must exactly match
+the configured model. Readiness first verifies model listing and then performs
+a bounded local generation probe, so a merely installed-but-unusable model does
+not count as ready.
+
+Readiness only:
+
+~~~powershell
+python -m scripts.check_generator --config config.yaml
+~~~
+
+Acceptance smoke plus E4 runtime-manifest merge:
+
+~~~powershell
+python -m scripts.check_generator --config config.yaml --smoke --update-manifest --output-dir artifacts\e4-validation
+~~~
+
+The smoke sends `Reply with exactly: OK` through the same Generator used by the
+application with temperature 0, max 512 new tokens and seed 42. On the verified
+Admin machine it returned exactly `OK`; Ollama then reported the configured
+Ministral model at 100% GPU with a 32768-token context.
+
+Generator infrastructure failures remain explicit and separate from future RAG
+semantic statuses: connection refused, connect timeout, read timeout, missing
+model, GPU OOM, generic runtime HTTP failure, malformed response, and unexpected
+model identity all raise structured Generator errors.
+
+The runtime lock is manifest-based rather than source-hardcoded. The manifest
+stores the exact locked profile plus a deterministic profile SHA256. With
+`runtime_profile_locked=true`, the current config must match that manifest
+profile before the Generator is used. This prevents silent drift without
+permanently tying the codebase to one model.
+
+To experiment with another local Ollama model/profile, set
+`runtime_profile_locked=false`, change the LLM config, then verify it without
+changing the canonical lock:
+
+~~~powershell
+python -m scripts.check_generator --config config.yaml --smoke --output-dir artifacts\e4-candidate
+~~~
+
+When that candidate is intentionally chosen as the new benchmark profile, keep
+the config unlocked and explicitly replace the manifest lock:
+
+~~~powershell
+python -m scripts.check_generator --config config.yaml --smoke --relock-runtime-profile --output-dir artifacts\e4-validation
+~~~
+
+After relocking, set `runtime_profile_locked=true` again for normal benchmark
+runs. An ordinary `--update-manifest` only refreshes verification for the same
+already-locked profile and cannot silently replace it. Relocking is forbidden
+after `final_test_frozen=true`.
+
+E4 also reads Ollama native metadata (`/api/version`, `/api/tags`, `/api/ps`) and
+checks the observed runtime version, model digest, quantization and effective
+context against the declared profile before provenance can be updated.
+
+`runtime_profile_locked` is separate from the final test freeze. The final test
+remains unfrozen until `final_test_frozen=true`. Because the global manifest
+records Git identity, rerun the E4 smoke/manifest command after the E4 commit
+when a clean-commit manifest snapshot is required.
+
 ## Tests
 
 ~~~powershell
@@ -573,10 +644,15 @@ python -m pip check
 E1 tests cover strict loading, malformed records, duplicate IDs, qrel reference
 validation, multi-document relevance, metadata isolation, deterministic split,
 real-data counts/hashes, overlap policy, and manifest merge/conflict behavior.
+E4 tests cover flexible unlocked profiles, manifest-authoritative locking,
+explicit relock transitions, canonical profile hashing, loopback-only routing,
+observed Ollama metadata, deterministic request parameters, readiness,
+transport/timeouts, model unavailable/OOM, malformed responses and model
+mismatch.
 
 ## Commands not implemented yet
 
-These remain scaffold commands until their E4-E7 epics are implemented:
+These remain scaffold commands until their E5-E7 epics are implemented:
 
 ~~~powershell
 python -m scripts.ask --query "..." --top-k 5

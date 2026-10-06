@@ -43,6 +43,7 @@ class E1ManifestTests(unittest.TestCase):
         self.assertEqual(merged["custom"], {"keep": True})
         self.assertEqual(merged["split"]["seed"], 42)
         self.assertEqual(merged["dataset"]["corpus_count"], 5183)
+        self.assertFalse(merged["freeze"]["runtime_profile_locked"])
 
     def test_same_e1_identity_can_merge_idempotently(self) -> None:
         config = load_config()
