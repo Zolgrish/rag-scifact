@@ -9,7 +9,7 @@ This repository implements the DFM-ENGINEERING SciFact RAG exercise with:
 
 ## Current status
 
-E0, E1, E2, E3 and E4 are implemented on the final Admin machine.
+E0–E5 are implemented on the final Admin machine.
 
 E1 now includes:
 
@@ -26,8 +26,9 @@ E2 provides source-preserving MiniLM token windows and a normalized embedding
 wrapper, validated with the real model and the full corpus. E3 adds a validated,
 reloadable FAISS bundle and dense document retrieval. E4 adds the concrete
 local Ollama/OpenAI-compatible Generator, readiness, structured infrastructure
-errors, deterministic smoke validation and runtime manifest locking. E5-E7 remain
-pending: ask, evaluate and evaluate-generation are still scaffold commands.
+errors, deterministic smoke validation and runtime manifest locking. E5 adds
+grounded ask orchestration, exact local context counting, strict model JSON and
+context-only citation validation. Evaluation commands remain pending for E6/E7.
 
 ## Final benchmark/demo machine
 
@@ -632,6 +633,94 @@ remains unfrozen until `final_test_frozen=true`. Because the global manifest
 records Git identity, rerun the E4 smoke/manifest command after the E4 commit
 when a clean-commit manifest snapshot is required.
 
+## E5 - Grounded ask and prompt provenance
+
+Reuse the persisted SciFact bundle and locally cached pinned MiniLM model:
+
+~~~powershell
+python -m scripts.ask --query "What evidence links physical activity and cardiovascular health?" --config config.yaml
+~~~
+
+Omitting `--top-k` uses `retrieval.top_k`; an explicit flag overrides it within
+the configured maximum. JSON goes to stdout, errors/logs to stderr and run logs.
+Exit codes: 0 success, 2 invalid request, 3 invalid model output, 1 infrastructure
+or configuration failure. Public retrieved entries contain document ID, rank and
+similarity score; they do not expose full source text. Citations contain quotes.
+Normal asks never mutate the canonical manifest or download model/tokenizer assets.
+The factory uses `local_files_only=True` and reuses
+`artifacts/e2-validation/model-cache` when present, otherwise the standard local
+Hugging Face cache. Prepare the exact pinned MiniLM cache explicitly before asking
+on a clean machine. The existing E2/E3 cache controls can be used for that setup.
+
+`app.rag.build_rag_pipeline` validates the canonical E4 runtime lock before index,
+embedder, retriever or Generator construction. Reuse this factory for future E6/API
+callers. Retrieval runs once, before token counting and final answer generation.
+The immutable `ContextBundle.included` snapshot is the only citation authority.
+
+Budgeting counts the full rendered system/user chat with Ollama `/api/chat`,
+using `prompt_eval_count` from a deterministic one-token probe. This is a local
+runtime call after retrieval, not a MiniLM/character estimate. The 512-token output
+reserve must fit with input inside the configured 32768-token window. Full Top-K
+is counted once; on overflow every remaining rank prefix is checked (Top-K is
+bounded at 10) and the largest fitting whole-chunk prefix is selected without
+assuming tokenizer counts are monotonic. Lower-ranked chunks cannot replace an
+excluded earlier chunk. Even an oversized base prompt fails explicitly.
+
+The explicit system prompt treats document titles/text as untrusted data. User
+question and evidence are deterministic JSON; scores are excluded. Prompt version
+is `rag-grounded-json-v1`; `app.prompt.prompt_identity()` exposes its static SHA256,
+schema/serialization versions and context policy. The hash excludes request data.
+
+E5 requests Ollama JSON mode (`response_format: {"type": "json_object"}`);
+model output must still be exactly one object with `status`, `answer`, `citations`.
+The parser rejects extra/missing keys, duplicate keys, non-standard constants,
+fences, surrounding prose and wrong/empty values. JSON mode is a generation
+constraint, not output repair. Any invalid citation rejects
+the entire output; there is no repair/retry. Matching permits only whitespace
+normalization, preserving case, punctuation and numbers. Identical duplicate
+citations are rejected. ANSWERED needs a valid citation; INSUFFICIENT_EVIDENCE
+allows zero; CONFLICTING_EVIDENCE needs valid citations from two distinct included
+documents. These checks establish structural grounding; semantic correctness and
+the canonical F01–F06 benchmark belong to E6.
+
+Verify real RAG, observed runtime identity, and equality between native prompt
+counting and OpenAI-compatible usage for the same fixed chat:
+
+~~~powershell
+python -m scripts.check_rag --config config.yaml
+python -m scripts.check_rag --config config.yaml --update-manifest
+~~~
+
+Only the explicit update writes E5 prompt/verification provenance to
+`artifacts/manifest.json`; it preserves every E1–E4 section and runtime lock.
+The report is `artifacts/<run_id>/rag_check.json`. Refresh with `--update-manifest`
+after committing E5 on a clean tree to record that source commit. Final-test frozen
+manifests reject prompt/config/source drift; E5 never sets the final freeze.
+The verification artifact records `source_git_commit` and `source_git_dirty`, and
+manifest merge rejects the artifact if that source state no longer matches the
+current repository state.
+Ordinary traces/logs contain IDs, versions, counts, truncation and timings, not
+full prompts or evidence texts. Check artifacts include the public smoke response.
+
+E4/E5 code and tests were produced with Codex assistance using direct Requests,
+standard-library JSON/dataclasses/hashlib, and the existing E2/E3 components.
+No model was trained or fine-tuned, and no generation framework was introduced.
+
+Observed E5 structural validation on 2026-10-07 reused the existing 10,359-vector
+bundle unchanged: five documents in context, 1,693 input tokens, no exclusions,
+two valid citations, ANSWERED, and the real Ministral model ID. Native and
+OpenAI-compatible prompt counts matched at 490 for the fixed check chat. Normal
+ask preserved the canonical manifest and all bundle file hashes. The explicit
+update preserved dataset/split/embedding/chunking/index/retrieval/llm/freeze
+sections, including every E4 lock field, while recording E5 prompt provenance.
+
+This smoke validates structure, not answer entailment. The live answer misstated
+which activity group had 20% lower mortality despite quoting the source correctly;
+E6 must assess this semantic error. Earlier development probes also demonstrated
+that fences, shortened IDs and altered quote punctuation fail explicitly. Baseline
+E5 does not repair them. A native count probe adds local inference latency, and
+overflow may require additional probes.
+
 ## Tests
 
 ~~~powershell
@@ -652,10 +741,9 @@ mismatch.
 
 ## Commands not implemented yet
 
-These remain scaffold commands until their E5-E7 epics are implemented:
+These remain scaffold commands until their E6/E7 epics are implemented:
 
 ~~~powershell
-python -m scripts.ask --query "..." --top-k 5
 python -m scripts.evaluate --split dev --config config.yaml
 python -m scripts.evaluate_generation --fixture data/fixtures/atlas.jsonl
 ~~~

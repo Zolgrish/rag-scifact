@@ -193,3 +193,36 @@ Generator calls should be mocked for unit/integration tests that do not specific
 - Infrastructure failures remain errors.
 - Request output includes request_id, retrieved items, timings and model identity.
 
+## E5 concrete baseline contract
+
+- `build_rag_pipeline` enforces the canonical manifest runtime lock before
+  constructing any Generator. Normal ask never updates that manifest.
+- Frozen `ContextBundle` includes/excludes whole chunks by retrieval rank prefix;
+  only included items authorize citations. Source text is never sliced.
+- Full system/user messages are deterministic JSON data plus explicit grounding
+  rules. Similarity scores are absent from model context.
+- Exact LLM budgeting uses Ollama native `/api/chat` with `num_predict=1`,
+  temperature 0 and seed 42, taking `prompt_eval_count`; no HF tokenizer download
+  or heuristic fallback. Full Top-K is counted first, then every remaining prefix
+  is checked (Top-K is bounded at 10) so the largest fitting prefix is selected
+  without assuming monotonic tokenizer counts. Input plus 512 output tokens must fit
+  the locked 32768 runtime window. Base-prompt overflow is an explicit error.
+- Model output is exactly one JSON object with only status/answer/citations.
+  E5 requests Ollama JSON mode via OpenAI-compatible `response_format` of type
+  `json_object`; the static prompt identity includes this output-mode contract.
+  Duplicate keys, NaN/Infinity, wrong types, empty answer/quote, fences and prose
+  fail. No baseline repair/retry occurs.
+- All citations must match included doc/chunk pairs and exact or whitespace-only
+  normalized source substrings. Identical duplicate citations fail. Any invalid
+  citation fails the entire output as `RAGOutputValidationError`.
+- Server structural validation requires at least one citation for ANSWERED and
+  at least two citations from distinct included documents for CONFLICTING_EVIDENCE.
+  INSUFFICIENT_EVIDENCE permits zero valid citations. These checks do not assert
+  entailment; semantic correctness and canonical F01–F06 evaluation belong to E6.
+- Prompt identity: `rag-grounded-json-v1`, output schema 1, context serialization 1,
+  policy `retrieval_rank_whole_chunk_prefix`. Its SHA256 covers the static template,
+  never request/query/evidence/timestamps. `scripts.check_rag --update-manifest`
+  explicitly records verified identity while preserving E4 locks/freeze fields.
+  The verification artifact binds `source_git_commit` plus `source_git_dirty`, and
+  merge rejects provenance produced from a different current Git source state.
+  Frozen prompt/config/source drift fails; normal asks remain read-only to manifest.

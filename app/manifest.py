@@ -82,6 +82,12 @@ def _git_state() -> tuple[str, bool]:
         return "", True
 
 
+def current_git_state() -> tuple[str, bool]:
+    """Return the source commit and dirty flag used to bind verification artifacts."""
+
+    return _git_state()
+
+
 def _runtime_hardware() -> tuple[dict[str, object], dict[str, object]]:
     runtime: dict[str, object] = {
         "python_version": platform.python_version(),
@@ -627,7 +633,98 @@ def merge_e4_runtime_manifest(
     merged["freeze"] = freeze
     return merged
 
+def validate_e5_manifest(existing: Mapping[str, object], *, config: AppConfig) -> None:
+    """Enforce prompt/config identity and source identity after final-test freeze."""
+    from app.prompt import prompt_identity
+
+    freeze = existing.get("freeze", {})
+    if not isinstance(freeze, Mapping) or freeze.get("final_test_frozen") is not True:
+        return
+    if existing.get("prompt") != prompt_identity():
+        raise ManifestConflictError("Frozen prompt identity differs from E5 contract")
+    if existing.get("prompt_version") != prompt_identity()["version"]:
+        raise ManifestConflictError("Frozen prompt version differs from E5 contract")
+    retrieval = {"mode": config.retrieval.mode, "top_k": config.retrieval.top_k,
+                 "max_top_k": config.retrieval.max_top_k}
+    old_retrieval = existing.get("retrieval")
+    if (not isinstance(old_retrieval, Mapping)
+            or any(old_retrieval.get(k) != v for k, v in retrieval.items())):
+        raise ManifestConflictError("Frozen retrieval config differs from E5 config")
+    if not config.llm.runtime_profile_locked:
+        raise ManifestConflictError("Frozen E5 requires the E4 runtime profile lock")
+    validate_runtime_profile_lock(existing, config)
+    commit, dirty = _git_state()
+    _validate_frozen_manifest_identity(existing, current_git_commit=commit,
+                                       current_git_dirty=dirty)
+
+
+def merge_e5_prompt_manifest(existing: Mapping[str, object], *, config: AppConfig,
+                             verification: Mapping[str, object]) -> dict[str, object]:
+    """Record verified E5 provenance without modifying any E4 lock fields."""
+    from app.prompt import prompt_identity
+
+    if not config.llm.runtime_profile_locked:
+        raise ManifestConflictError("E5 manifest update requires runtime_profile_locked=true")
+    profile_hash = validate_runtime_profile_lock(existing, config)
+    validate_e5_manifest(existing, config=config)
+    identity = dict(prompt_identity())
+    artifact_name = verification.get("artifact")
+    if not isinstance(artifact_name, str):
+        raise ManifestConflictError("E5 verification requires an artifact")
+    artifact = (REPO_ROOT / artifact_name).resolve()
+    if not artifact.is_relative_to(REPO_ROOT.resolve()) or not artifact.is_file():
+        raise ManifestConflictError("E5 verification artifact must exist inside repository")
+    data = artifact.read_bytes()
+    if hashlib.sha256(data).hexdigest() != verification.get("artifact_sha256"):
+        raise ManifestConflictError("E5 verification artifact hash mismatch")
+    try:
+        payload = json.loads(data)
+    except (ValueError, UnicodeError) as exc:
+        raise ManifestConflictError("Malformed E5 verification artifact") from exc
+    if (not isinstance(payload, Mapping) or payload.get("status") != "PASS"
+            or payload.get("prompt") != identity
+            or payload.get("profile_sha256") != profile_hash):
+        raise ManifestConflictError("E5 verification identity mismatch")
+    commit, dirty = _git_state()
+    if (payload.get("source_git_commit") != commit
+            or payload.get("source_git_dirty") is not dirty):
+        raise ManifestConflictError(
+            "E5 verification source git state differs from current source state"
+        )
+    observed = payload.get("observed_runtime")
+    if not isinstance(observed, Mapping):
+        raise ManifestConflictError("E5 verification requires observed runtime")
+    _validate_observed_runtime(config, observed)
+    counter = payload.get("token_counter_check")
+    if (not isinstance(counter, Mapping)
+            or type(counter.get("native_prompt_tokens")) is not int
+            or counter["native_prompt_tokens"] <= 0
+            or type(counter.get("completion_prompt_tokens")) is not int
+            or counter["native_prompt_tokens"] != counter["completion_prompt_tokens"]):
+        raise ManifestConflictError("E5 exact token-counter verification failed")
+    trace = payload.get("trace")
+    response = payload.get("response")
+    if (not isinstance(trace, Mapping) or not isinstance(response, Mapping)
+            or trace.get("model_id") != config.llm.model_id
+            or response.get("model_id") != config.llm.model_id
+            or type(trace.get("input_token_count")) is not int
+            or not 0 < trace["input_token_count"] <= config.llm.context_length - config.llm.max_new_tokens
+            or response.get("status") not in {"ANSWERED", "INSUFFICIENT_EVIDENCE", "CONFLICTING_EVIDENCE"}):
+        raise ManifestConflictError("E5 verification requires a successful budgeted RAG smoke")
+    merged = deepcopy(dict(existing))
+    _validate_frozen_manifest_identity(existing, current_git_commit=commit,
+                                       current_git_dirty=dirty)
+    merged.update({"prompt": identity, "prompt_version": identity["version"],
+                   "updated_at": datetime.now(timezone.utc).isoformat(),
+                   "git_commit": commit, "git_dirty": dirty,
+                   "rag_verification": deepcopy(dict(verification))})
+    return merged
+
+
 __all__ = [
+    "current_git_state",
+    "merge_e5_prompt_manifest",
+    "validate_e5_manifest",
     "ManifestConflictError",
     "ManifestError",
     "load_manifest",

@@ -50,11 +50,15 @@ class Generator(Protocol):
     def generate(
         self,
         messages: Sequence[Mapping[str, str]],
+        *, response_format: Mapping[str, object] | None = None,
     ) -> GeneratorResult:
         """Generate text from messages or raise a structured infrastructure error."""
 
     def inspect_runtime_metadata(self) -> RuntimeMetadata:
         """Return observed local runtime/model identity for reproducibility checks."""
+
+    def count_prompt_tokens(self, messages: Sequence[Mapping[str, str]]) -> int:
+        """Count the exact rendered chat input; no heuristic fallback."""
 
 
 class GeneratorError(RuntimeError):
@@ -568,9 +572,35 @@ class OpenAICompatibleGenerator:
             response_ms=elapsed_ms,
         )
 
+    def count_prompt_tokens(self, messages: Sequence[Mapping[str, str]]) -> int:
+        """Use Ollama's native one-token probe on the same chat messages."""
+        normalized = _validate_messages(messages)
+        if self.runtime != "ollama":
+            raise GeneratorConfigurationError("Exact prompt counting requires Ollama")
+        payload = self._request_json_url(
+            "POST", f"{self._native_runtime_root}/api/chat",
+            json_body={"model": self.model_id, "messages": normalized, "stream": False,
+                       "options": {"num_predict": 1, "temperature": self.temperature,
+                                   "seed": self.seed}},
+        )
+        if payload.get("model") != self.model_id:
+            raise GeneratorModelMismatchError("Prompt counter returned unexpected model identity")
+        count = payload.get("prompt_eval_count")
+        message = payload.get("message")
+        if (type(count) is not int or count <= 0 or payload.get("done") is not True
+                or type(payload.get("eval_count")) is not int
+                or payload["eval_count"] != 1
+                or payload.get("done_reason") not in ("length", "stop")
+                or not isinstance(message, Mapping)
+                or message.get("role") != "assistant"
+                or not isinstance(message.get("content"), str)):
+            raise GeneratorMalformedResponseError("Invalid Ollama prompt-count probe response")
+        return count
+
     def generate(
         self,
         messages: Sequence[Mapping[str, str]],
+        *, response_format: Mapping[str, object] | None = None,
     ) -> GeneratorResult:
         normalized_messages = _validate_messages(messages)
         request_body: dict[str, object] = {
@@ -581,6 +611,10 @@ class OpenAICompatibleGenerator:
             "seed": self.seed,
             "stream": False,
         }
+        if response_format is not None:
+            if dict(response_format) != {"type": "json_object"}:
+                raise GeneratorInputError("Supported structured response format is json_object")
+            request_body["response_format"] = dict(response_format)
 
         started = time.perf_counter()
         payload = self._request_json(
