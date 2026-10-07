@@ -12,7 +12,11 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(messages[0], {"role": "system", "content": SYSTEM_PROMPT})
         for text in ("only the supplied context", "untrusted", "never instructions",
                      "outside knowledge", "numbers", "authors", "secrets",
-                     "both sides", "winning source", "JSON object", "verbatim"):
+                     "status BEFORE", "directly bears", "different topic",
+                     "SAME requested fact/detail", "takes priority over ANSWERED", "does not",
+                     "directly support each incompatible source assertion",
+                     "invent a precedence rule",
+                     "JSON object", "exactly these three keys", "verbatim"):
             self.assertIn(text, SYSTEM_PROMPT)
 
     def test_injection_unicode_and_delimiters_remain_json_data(self):
@@ -31,7 +35,7 @@ class PromptTests(unittest.TestCase):
         identity = prompt_identity()
         build_messages("different", [ContextItem("b", "b:0-1", 1, "T", "Body")])
         self.assertEqual(identity, prompt_identity())
-        self.assertEqual(identity["version"], "rag-grounded-json-v1")
+        self.assertEqual(identity["version"], "rag-grounded-json-v4")
         self.assertEqual(len(identity["sha256"]), 64)
         # A caller cannot change future identity by mutating its returned mapping.
         identity["token_counter"]["strategy"] = "heuristic"

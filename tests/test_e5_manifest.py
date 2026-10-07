@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from app.config import REPO_ROOT, load_config
-from app.manifest import (ManifestConflictError, merge_e5_prompt_manifest,
+from app.manifest import (E5_CANONICAL_SMOKE_QUERY, ManifestConflictError,
+                          merge_e5_prompt_manifest,
                           runtime_profile_from_config, runtime_profile_sha256,
                           validate_e5_manifest)
 from app.prompt import prompt_identity
@@ -30,7 +31,8 @@ def locked_manifest(config):
 
 
 def check_payload(config):
-    return {"status": "PASS", "source_git_commit": "source",
+    return {"status": "PASS", "query": E5_CANONICAL_SMOKE_QUERY,
+            "source_git_commit": "source",
             "source_git_dirty": False, "prompt": dict(prompt_identity()),
             "profile_sha256": runtime_profile_sha256(runtime_profile_from_config(config)),
             "observed_runtime": {"runtime": config.llm.runtime,
@@ -54,7 +56,9 @@ class ManifestTests(unittest.TestCase):
         root.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=root) as tmp:
             artifact = Path(tmp) / "rag_check.json"
-            artifact.write_text(json.dumps(payload or check_payload(self.config)), encoding="utf-8")
+            artifact.write_text(json.dumps(
+                payload if payload is not None else check_payload(self.config)
+            ), encoding="utf-8")
             verification = {"artifact": artifact.relative_to(REPO_ROOT).as_posix(),
                             "artifact_sha256": hash_override or hashlib.sha256(artifact.read_bytes()).hexdigest()}
             with patch("app.manifest._git_state", return_value=("source", False)):
@@ -68,7 +72,7 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(merged[key], self.existing[key])
         self.assertEqual(self.existing, original)
         self.assertEqual(merged["prompt"], prompt_identity())
-        self.assertEqual(merged["prompt_version"], "rag-grounded-json-v1")
+        self.assertEqual(merged["prompt_version"], "rag-grounded-json-v4")
 
     def test_locked_config_mismatch_or_unlocked_update_fails(self):
         for changes in ({"model_id": "different"}, {"runtime_profile_locked": False}):
@@ -121,6 +125,16 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(
                     ManifestConflictError, "source git state"):
                 self.merge(payload)
+
+    def test_verification_must_bind_canonical_smoke_query(self):
+        payload = check_payload(self.config)
+        payload["query"] = "different smoke query"
+        with self.assertRaisesRegex(ManifestConflictError, "canonical smoke query"):
+            self.merge(payload)
+
+    def test_verification_artifact_root_must_be_object(self):
+        with self.assertRaisesRegex(ManifestConflictError, "Malformed E5 verification artifact"):
+            self.merge([])
 
 
 if __name__ == "__main__":

@@ -5,7 +5,9 @@ Third-party imports remain lazy so configuration can still be inspected with min
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import hashlib
+import json
 from pathlib import Path
 import math
 import os
@@ -84,6 +86,47 @@ class AppConfig:
     retrieval: RetrievalConfig
     llm: LLMConfig
     logging: LoggingConfig
+
+
+def _stable_path_identity(path: Path) -> str:
+    """Prefer repo-relative POSIX paths while preserving external path identity."""
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def effective_config_snapshot(config: AppConfig) -> dict[str, object]:
+    """Canonical resolved AppConfig state used to bind evaluation provenance."""
+    return {
+        "schema_version": 1,
+        "project": {"name": config.name, "seed": config.seed},
+        "paths": {
+            key: _stable_path_identity(getattr(config.paths, key))
+            for key in (
+                "corpus", "queries", "qrels_train", "qrels_test", "fixture_corpus",
+                "index_dir", "log_dir", "artifact_dir",
+            )
+        },
+        "embedding": asdict(config.embedding),
+        "retrieval": asdict(config.retrieval),
+        "llm": asdict(config.llm),
+        "logging": asdict(config.logging),
+    }
+
+
+def effective_config_identity(config: AppConfig) -> dict[str, object]:
+    """Return a deterministic hash plus snapshot of the effective resolved config."""
+    snapshot = effective_config_snapshot(config)
+    encoded = json.dumps(
+        snapshot, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    return {
+        "schema_version": 1,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "snapshot": snapshot,
+    }
 
 
 def _resolve_repo_path(value: str) -> Path:

@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 from app.citations import RAGOutputValidationError
 from app.config import load_config
 from app.generator import GeneratorConnectionError, GeneratorResult, RuntimeMetadata
+from app.manifest import E5_CANONICAL_SMOKE_QUERY
 from app.models import RAGResponse, RetrievedDocument, SemanticStatus
 from app.rag import RAGExecution, RAGTrace
 from app.retriever import QueryValidationError
@@ -96,10 +97,13 @@ class CLITests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(write.call_count, 2 if update else 1)
             self.assertEqual(merge.call_count, int(update))
-            pipeline.ask.assert_called_once()
+            pipeline.ask.assert_called_once_with(E5_CANONICAL_SMOKE_QUERY,
+                                                 config.retrieval.top_k,
+                                                 request_id="check-run")
             artifact_payload = write.call_args_list[0].args[1]
             self.assertEqual(artifact_payload["source_git_commit"], "source-commit")
             self.assertIs(artifact_payload["source_git_dirty"], False)
+            self.assertEqual(artifact_payload["query"], E5_CANONICAL_SMOKE_QUERY)
 
     def test_check_rejects_unlocked_update_before_composition(self):
         config = load_config()
@@ -108,6 +112,14 @@ class CLITests(unittest.TestCase):
              patch.object(check_rag, "build_rag_pipeline") as factory, \
              redirect_stderr(io.StringIO()):
             self.assertEqual(check_rag.main(["--update-manifest"]), 1)
+        factory.assert_not_called()
+
+    def test_canonical_update_rejects_custom_query_before_composition(self):
+        with patch.object(check_rag, "bootstrap",
+                          return_value=(load_config(), Mock(), "run")), \
+             patch.object(check_rag, "build_rag_pipeline") as factory, \
+             redirect_stderr(io.StringIO()):
+            self.assertEqual(check_rag.main(["--update-manifest", "--query", "custom"]), 1)
         factory.assert_not_called()
 
     def test_counter_mismatch_cannot_write_verification_or_manifest(self):

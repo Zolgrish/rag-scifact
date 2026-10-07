@@ -18,6 +18,12 @@ from app.config import AppConfig, REPO_ROOT
 from app.data_audit import DatasetSplit
 
 
+E5_CANONICAL_SMOKE_QUERY = (
+    "What effect did exercise training have on self-reported health status in patients "
+    "with chronic heart failure?"
+)
+
+
 class ManifestError(RuntimeError):
     """Raised when a manifest cannot be read or safely updated."""
 
@@ -681,7 +687,11 @@ def merge_e5_prompt_manifest(existing: Mapping[str, object], *, config: AppConfi
         payload = json.loads(data)
     except (ValueError, UnicodeError) as exc:
         raise ManifestConflictError("Malformed E5 verification artifact") from exc
-    if (not isinstance(payload, Mapping) or payload.get("status") != "PASS"
+    if not isinstance(payload, Mapping):
+        raise ManifestConflictError("Malformed E5 verification artifact")
+    if payload.get("query") != E5_CANONICAL_SMOKE_QUERY:
+        raise ManifestConflictError("E5 verification canonical smoke query mismatch")
+    if (payload.get("status") != "PASS"
             or payload.get("prompt") != identity
             or payload.get("profile_sha256") != profile_hash):
         raise ManifestConflictError("E5 verification identity mismatch")
@@ -721,7 +731,107 @@ def merge_e5_prompt_manifest(existing: Mapping[str, object], *, config: AppConfi
     return merged
 
 
+def _verified_e6_artifact(record: object) -> tuple[Path, bytes]:
+    if not isinstance(record, Mapping) or not isinstance(record.get("artifact"), str):
+        raise ManifestConflictError("E6 requires artifact paths and SHA256 values")
+    path = (REPO_ROOT / record["artifact"]).resolve()
+    if not path.is_relative_to(REPO_ROOT.resolve()) or not path.is_file():
+        raise ManifestConflictError("E6 artifacts must exist inside repository")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != record.get("sha256"):
+        raise ManifestConflictError("E6 artifact SHA256 mismatch")
+    return path, data
+
+
+def merge_e6_generation_manifest(existing: Mapping[str, object], *, config: AppConfig,
+                                verification: Mapping[str, object]) -> dict[str, object]:
+    """Bind six passing fixture cases to the same clean E5/source identity."""
+    from app.citations import RAGOutputValidationError
+    from app.config import effective_config_identity
+    from app.evaluator import (GENERATION_CASES, GenerationArtifactError, suite_identity,
+                               verify_generation_row)
+    from app.fixtures import load_atlas, guard_fixture_path, validate_atlas_bundle
+    from app.indexer import load_bundle
+    from app.prompt import prompt_identity
+
+    commit, dirty = current_git_state()
+    if not commit or dirty:
+        raise ManifestConflictError("E6 canonical update requires a source-clean committed tree")
+    validate_runtime_profile_lock(existing, config)
+    validate_e5_manifest(existing, config=config)
+    if not config.llm.runtime_profile_locked:
+        raise ManifestConflictError("E6 canonical update requires the E4 lock")
+    if existing.get("git_commit") != commit or existing.get("git_dirty") is not False:
+        raise ManifestConflictError("Stale E5 provenance; refresh scripts.check_rag --update-manifest first")
+    try:
+        merge_e5_prompt_manifest(existing, config=config, verification=existing.get("rag_verification", {}))
+    except ManifestError as exc:
+        raise ManifestConflictError("Stale/invalid E5 verification; refresh scripts.check_rag --update-manifest first") from exc
+    _, summary_bytes = _verified_e6_artifact(verification.get("summary"))
+    _, run_bytes = _verified_e6_artifact(verification.get("generation_run"))
+    try:
+        summary = json.loads(summary_bytes)
+        rows = [json.loads(line) for line in run_bytes.splitlines()]
+    except (ValueError, UnicodeError) as exc:
+        raise ManifestConflictError("Malformed E6 evaluation artifacts") from exc
+    expected_retrieval = {"mode": config.retrieval.mode, "top_k": config.retrieval.top_k,
+                          "max_top_k": config.retrieval.max_top_k}
+    if (not isinstance(summary, Mapping) or summary.get("status") != "PASS"
+            or summary.get("cases") != 6 or summary.get("passed") != 6 or summary.get("failed") != 0
+            or summary.get("source_git_commit") != commit or summary.get("source_git_dirty") is not False
+            or summary.get("prompt") != prompt_identity() or summary.get("fixture_suite") != suite_identity()
+            or summary.get("effective_config") != effective_config_identity(config)
+            or summary.get("runtime_profile_sha256") != runtime_profile_sha256(runtime_profile_from_config(config))
+            or summary.get("retrieval") != expected_retrieval or summary.get("model_id") != config.llm.model_id):
+        raise ManifestConflictError("E6 summary is failed, stale, or incompatible with current source/config")
+    if [row.get("case_id") if isinstance(row, Mapping) else None for row in rows] != [case.case_id for case in GENERATION_CASES]:
+        raise ManifestConflictError("E6 requires six passing ordered case rows")
+    raw_config = summary["config"]
+    _verified_e6_artifact(raw_config)
+    fixture = summary["fixture_corpus"]
+    fixture_path, _ = _verified_e6_artifact(fixture)
+    corpus = load_atlas(fixture_path)
+    index_manifest_path, _ = _verified_e6_artifact(summary["fixture_index"]["manifest"])
+    bundle_path = guard_fixture_path(summary["fixture_index"]["bundle_path"], config.paths.index_dir / "scifact")
+    if index_manifest_path != bundle_path / "index_manifest.json":
+        raise ManifestConflictError("E6 index path/provenance mismatch")
+    bundle = load_bundle(bundle_path, expected_corpus_sha256=fixture["sha256"])
+    validate_atlas_bundle(bundle, corpus)
+    identity = prompt_identity()
+    try:
+        for case, row in zip(GENERATION_CASES, rows):
+            if not isinstance(row, Mapping) or row.get("run_id") != summary.get("run_id"):
+                raise GenerationArtifactError(f"{case.case_id} run identity mismatch")
+            execution, grading = verify_generation_row(case, row, bundle)
+            if (grading.get("passed") is not True
+                    or execution.trace.prompt_version != identity["version"]
+                    or execution.trace.prompt_sha256 != identity["sha256"]
+                    or execution.trace.model_id != config.llm.model_id
+                    or execution.response.model_id != config.llm.model_id):
+                raise GenerationArtifactError(f"{case.case_id} current runtime/grader identity mismatch")
+    except (GenerationArtifactError, RAGOutputValidationError, TypeError, ValueError, KeyError) as exc:
+        raise ManifestConflictError("E6 generation rows failed independent verification") from exc
+    if current_git_state() != (commit, False):
+        raise ManifestConflictError("Source Git state changed during E6 verification")
+    merged = deepcopy(dict(existing))
+    section = {"schema_version": 1, "suite_version": suite_identity()["version"],
+               "suite_sha256": suite_identity()["sha256"], "fixture_corpus_sha256": fixture["sha256"],
+               "fixture_index_manifest_sha256": summary["fixture_index"]["manifest"]["sha256"],
+               "generation_run": deepcopy(verification["generation_run"]),
+               "summary": deepcopy(verification["summary"]), "cases": 6, "passed": 6, "failed": 0}
+    freeze = existing.get("freeze", {})
+    if isinstance(freeze, Mapping) and freeze.get("final_test_frozen") is True:
+        old = existing.get("generation_fixture", {})
+        keys = ("suite_version", "suite_sha256", "fixture_corpus_sha256", "fixture_index_manifest_sha256")
+        if not isinstance(old, Mapping) or any(old.get(k) != section[k] for k in keys):
+            raise ManifestConflictError("Frozen E6 fixture identity differs")
+    merged["generation_fixture"] = section
+    return merged
+
+
 __all__ = [
+    "E5_CANONICAL_SMOKE_QUERY",
+    "merge_e6_generation_manifest",
     "current_git_state",
     "merge_e5_prompt_manifest",
     "validate_e5_manifest",

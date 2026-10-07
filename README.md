@@ -9,7 +9,7 @@ This repository implements the DFM-ENGINEERING SciFact RAG exercise with:
 
 ## Current status
 
-E0–E5 are implemented on the final Admin machine.
+E0–E6 are implemented on the final Admin machine.
 
 E1 now includes:
 
@@ -28,7 +28,8 @@ reloadable FAISS bundle and dense document retrieval. E4 adds the concrete
 local Ollama/OpenAI-compatible Generator, readiness, structured infrastructure
 errors, deterministic smoke validation and runtime manifest locking. E5 adds
 grounded ask orchestration, exact local context counting, strict model JSON and
-context-only citation validation. Evaluation commands remain pending for E6/E7.
+context-only citation validation. E6 evaluates the separate Atlas generation
+fixtures; SciFact retrieval evaluation remains pending for E7.
 
 ## Final benchmark/demo machine
 
@@ -668,8 +669,11 @@ excluded earlier chunk. Even an oversized base prompt fails explicitly.
 
 The explicit system prompt treats document titles/text as untrusted data. User
 question and evidence are deterministic JSON; scores are excluded. Prompt version
-is `rag-grounded-json-v1`; `app.prompt.prompt_identity()` exposes its static SHA256,
+is `rag-grounded-json-v4`; `app.prompt.prompt_identity()` exposes its static SHA256,
 schema/serialization versions and context policy. The hash excludes request data.
+The status decision first filters to evidence directly relevant to the requested
+fact, then gives unresolved conflicts precedence over insufficiency and answered
+results. Unrelated contradictions elsewhere in retrieved context do not change status.
 
 E5 requests Ollama JSON mode (`response_format: {"type": "json_object"}`);
 model output must still be exactly one object with `status`, `answer`, `citations`.
@@ -696,9 +700,13 @@ Only the explicit update writes E5 prompt/verification provenance to
 The report is `artifacts/<run_id>/rag_check.json`. Refresh with `--update-manifest`
 after committing E5 on a clean tree to record that source commit. Final-test frozen
 manifests reject prompt/config/source drift; E5 never sets the final freeze.
-The verification artifact records `source_git_commit` and `source_git_dirty`, and
-manifest merge rejects the artifact if that source state no longer matches the
-current repository state.
+Canonical updates use and bind one fixed SciFact smoke question about the effect of
+exercise training on self-reported health status in chronic heart failure. The
+question retrieves a concise top-ranked conclusion and still exercises live
+retrieval, context budgeting, generation and verbatim citation validation. Custom
+`--query` values remain available for diagnostics, but cannot update the canonical
+manifest. The verification artifact records the exact query, `source_git_commit`
+and `source_git_dirty`; manifest merge rejects a different query or source state.
 Ordinary traces/logs contain IDs, versions, counts, truncation and timings, not
 full prompts or evidence texts. Check artifacts include the public smoke response.
 
@@ -706,7 +714,7 @@ E4/E5 code and tests were produced with Codex assistance using direct Requests,
 standard-library JSON/dataclasses/hashlib, and the existing E2/E3 components.
 No model was trained or fine-tuned, and no generation framework was introduced.
 
-Observed E5 structural validation on 2026-10-07 reused the existing 10,359-vector
+An earlier E5 development smoke on 2026-10-07 reused the existing 10,359-vector
 bundle unchanged: five documents in context, 1,693 input tokens, no exclusions,
 two valid citations, ANSWERED, and the real Ministral model ID. Native and
 OpenAI-compatible prompt counts matched at 490 for the fixed check chat. Normal
@@ -720,6 +728,113 @@ E6 must assess this semantic error. Earlier development probes also demonstrated
 that fences, shortened IDs and altered quote punctuation fail explicitly. Baseline
 E5 does not repair them. A native count probe adds local inference latency, and
 overflow may require additional probes.
+
+The prompt-v4 canonical smoke now uses the fixed chronic-heart-failure question
+described above. Development run `20261007T134036Z-22090835` retrieved the concise
+top-ranked conclusion in `40817021:380-463`, used five context chunks / 1,713 input
+tokens, returned one exact citation with ANSWERED, and matched native/completion
+prompt counts at 790/790. This remains a structural smoke, not an entailment
+benchmark; E6 owns semantic fixture grading.
+
+## E6 - Atlas generation fixtures
+
+`data/fixtures/atlas.jsonl` contains the six exercise-prescribed fictional Atlas
+documents F01–F06. These are test documents, not real company policies. The separate
+bundle is `indexes/fixtures/atlas`; SciFact's bundle is never rebuilt or modified.
+The fixture helper validates exact corpus content/order/schema, uses the existing
+loader/MiniLM chunker/embedder/FAISS primitives, and checks SciFact hashes before
+and after the explicit fixture build. Model downloads are prohibited when
+`--local-files-only` is selected. Normal evaluation uses an existing bundle and
+the E5 factory's offline query embedder; missing/corrupt fixture bundles fail.
+
+~~~powershell
+python -m scripts.evaluate_generation --config config.yaml --build-index --cache-folder artifacts/e2-validation/model-cache --local-files-only --device cuda
+python -m scripts.evaluate_generation --config config.yaml
+~~~
+
+Options include `--fixture`, `--bundle`, `--batch-size`, `--cache-folder`,
+`--local-files-only`, `--device`, `--build-index`, and `--update-manifest`.
+Omitting `--build-index` never rebuilds implicitly. Top-K comes from config.
+The shared `build_rag_pipeline_from_bundle` preserves E4 lock/E5 freeze checks
+and composes the same production retriever and Generator against Atlas.
+
+`app.evaluator` owns six ordered questions and all expected statuses/facts/forbidden
+claims. Only each question string enters RAG; grading labels never enter corpus,
+index, prompt, retrieval or generation inputs. Suite identity is
+`atlas-generation-v1` with grading policy `atlas-en-vi-predicates-v4`; its SHA256
+binds static cases, EN/VI predicate rules and grading implementation. Run IDs,
+timestamps, answers, timings and retrieval results are excluded.
+
+The deterministic grader checks creator/member/admin-transfer permissions, 30-day
+creation-based expiry and owner shortening, team-lead approval and Operations'
+two-working-day activation/rejection behavior, unspecified password requirements,
+unresolved 50/100 MB notice conflict, and 08:00–17:00 Monday–Friday support. It checks
+both answer facts and aggregate source-valid citation coverage. Q06 rejects
+affirmative 24/7 or secret-disclosure claims while allowing safe discussion of
+the malicious note. The fixture contains no API key. These are explicit bilingual
+predicates, not a general entailment model; unfamiliar paraphrases can be rejected.
+Failures retain distinct retrieval/context, status, semantic, unsupported-claim,
+citation-coverage, conflict, injection, invalid-output and infrastructure codes.
+Unexpected evaluator/programming faults use a separate evaluator-error code rather
+than being mislabeled as infrastructure. One failed case never removes later cases,
+and a case is never retried within a suite.
+
+Each run writes UTF-8/LF `artifacts/<run_id>/generation_run.jsonl` (Q01→Q06) and
+`generation_summary.json`, published atomically per file with the summary last.
+Strict JSON rejects NaN/Infinity. Summary records source commit/dirty state captured
+before evaluation, raw config hash, effective retrieval settings, prompt/runtime/
+suite/corpus/index identities, a deterministic snapshot/hash of the resolved
+effective AppConfig, observed local runtime and SciFact integrity hashes.
+Latency p50 includes all returned responses, even semantic failures; exceptions
+have no fabricated timing and remain in the six-case failure denominator.
+Exit codes are 0 all-pass, 2 failed fixture cases, and 1 setup/provenance failure.
+
+Normal evaluation never changes `artifacts/manifest.json`. Canonical E6 updates
+require all six cases to pass, a clean committed source tree, unchanged source
+state, and E5 verification from that same clean commit. Existing E1–E5 sections,
+runtime lock and freeze fields are preserved. A stale E5 record permits normal
+development runs but blocks canonical E6 updates. E6 never sets the final freeze.
+
+After committing under your own local-ignore policy, finalize in this order:
+
+~~~powershell
+python -m scripts.check_rag --config config.yaml --update-manifest
+python -m scripts.evaluate_generation --config config.yaml --cache-folder artifacts/e2-validation/model-cache --device cuda --update-manifest
+~~~
+
+The canonical E6 command reuses the already validated separate Atlas fixture index.
+Use `--build-index --local-files-only` only when that fixture bundle is absent or
+intentionally being rebuilt; canonicalization does not require an unnecessary
+rebuild and never rebuilds the SciFact index.
+
+E6 source/tests were produced with Codex assistance using existing production
+primitives and standard-library deterministic grading. No LLM judge, web service,
+model training, fixture-specific runtime shortcuts or E7 metrics were introduced.
+
+Observed development validation on 2026-10-07 built six Atlas chunks using cached
+MiniLM on CUDA and exercised Q01–Q06 through Ollama Ministral Q8_0. The immutable
+original run `artifacts/20261007T100159Z-a59064c7` scored 2/6 under grader v1.
+Offline regrades preserved those model outputs while fixing evaluator false negatives:
+v2 scored 3/6 and v3 scored 4/6 with zero generator calls. The audit then added
+independent artifact reconstruction/regrading, effective-config provenance and the
+v4 error/grading policy.
+
+Prompt v2 fixed the genuine Q04 insufficiency and Q05 conflict behavior, but a new
+development suite exposed over-broad conflict selection when unrelated retrieved
+documents disagreed. Prompt v3 added a relevance gate before status selection and
+produced a 6/6 diagnostic run. Prompt v4 then aligned the conflict citation wording
+with grader v4: both incompatible source assertions require exact citation coverage,
+while the explanation that no supplied rule resolves them is not given a stricter
+fixture-only quote requirement. A fresh E5 verification for prompt v4 passed with
+native/completion prompt counts 790/790. The subsequent live run
+`artifacts/20261007T132021Z-4a226142` passed all six cases under grader v4 using
+prompt SHA256 `1b9b14f2563f9cfe88ebefec75c85cb69ff3480304c0d6058546e0df2fff6702`
+and suite SHA256 `7837ab88900fe677db247675e81ef0f1fb2e5107072855f0c636aaaea49f5361`.
+Each development suite performs exactly one generation per case; a new suite is run
+only after changing the prompt contract. SciFact bundle hashes remain unchanged.
+The canonical manifest is intentionally unchanged while the current E6 source is
+dirty/uncommitted; canonical E5/E6 provenance must be regenerated on the final clean
+commit before E6 is recorded.
 
 ## Tests
 
@@ -741,11 +856,10 @@ mismatch.
 
 ## Commands not implemented yet
 
-These remain scaffold commands until their E6/E7 epics are implemented:
+This remains a scaffold command until E7 is implemented:
 
 ~~~powershell
 python -m scripts.evaluate --split dev --config config.yaml
-python -m scripts.evaluate_generation --fixture data/fixtures/atlas.jsonl
 ~~~
 
 Do not treat scaffold output as a benchmark result.

@@ -128,12 +128,24 @@ def build_rag_pipeline(config: AppConfig | str | Path = "config.yaml", *,
                        device: str | None = None) -> RAGPipeline:
     """Single composition path; validate canonical locks before runtime construction."""
     config = config if isinstance(config, AppConfig) else load_config(config)
+    return build_rag_pipeline_from_bundle(
+        config, bundle_path=config.paths.index_dir / "scifact",
+        expected_corpus_sha256=EXPECTED_FILE_SHA256["corpus"],
+        logger=logger, cache_folder=cache_folder, device=device,
+    )
+
+
+def build_rag_pipeline_from_bundle(
+    config: AppConfig, *, bundle_path: str | Path, expected_corpus_sha256: str,
+    logger: logging.Logger | None = None, cache_folder: str | Path | None = None,
+    device: str | None = None,
+) -> RAGPipeline:
+    """Compose the same production pipeline against an explicitly identified corpus."""
     manifest = load_manifest(config.paths.artifact_dir / "manifest.json")
     validate_runtime_profile_lock(manifest, config)
     validate_e5_manifest(manifest, config=config)
     validate_retrieval_settings(config.retrieval.mode, config.retrieval.max_top_k)
-    bundle = load_bundle(config.paths.index_dir / "scifact",
-                         expected_corpus_sha256=EXPECTED_FILE_SHA256["corpus"])
+    bundle = load_bundle(bundle_path, expected_corpus_sha256=expected_corpus_sha256)
     # Reuse the verified repository cache if present; all normal asks stay offline.
     cached = config.paths.artifact_dir / "e2-validation" / "model-cache"
     cache_folder = cache_folder if cache_folder is not None else (cached if cached.is_dir() else None)
