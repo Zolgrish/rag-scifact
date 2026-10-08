@@ -9,7 +9,8 @@ This repository implements the DFM-ENGINEERING SciFact RAG exercise with:
 
 ## Current status
 
-E0–E6 are implemented on the final Admin machine.
+E0–E7 are implemented on the final Admin machine. E7 development uses only the
+100-query internal dev split; official test execution requires a separate seal.
 
 E1 now includes:
 
@@ -29,7 +30,8 @@ local Ollama/OpenAI-compatible Generator, readiness, structured infrastructure
 errors, deterministic smoke validation and runtime manifest locking. E5 adds
 grounded ask orchestration, exact local context counting, strict model JSON and
 context-only citation validation. E6 evaluates the separate Atlas generation
-fixtures; SciFact retrieval evaluation remains pending for E7.
+fixtures. E7 adds the SciFact dev retrieval benchmark, metric artifacts, failure
+analysis and the explicit pre-test freeze/test gate.
 
 ## Final benchmark/demo machine
 
@@ -366,7 +368,7 @@ The manifest stores:
 - all 709 practice IDs
 - aggregate query-overlap audit policy/results
 - known E0 runtime/hardware metadata
-- placeholders for later E2-E7 sections
+- later E2-E7 provenance sections as those stages are canonicalized
 
 E1 manifest updates are conflict-safe: an existing manifest with different
 dataset hashes or split identity is rejected instead of silently overwritten.
@@ -832,9 +834,113 @@ prompt SHA256 `1b9b14f2563f9cfe88ebefec75c85cb69ff3480304c0d6058546e0df2fff6702`
 and suite SHA256 `7837ab88900fe677db247675e81ef0f1fb2e5107072855f0c636aaaea49f5361`.
 Each development suite performs exactly one generation per case; a new suite is run
 only after changing the prompt contract. SciFact bundle hashes remain unchanged.
-The canonical manifest is intentionally unchanged while the current E6 source is
-dirty/uncommitted; canonical E5/E6 provenance must be regenerated on the final clean
-commit before E6 is recorded.
+At that development point the canonical manifest remained unchanged until the E6
+source was committed. E5 PASS and E6 PASS 6/6 were subsequently canonicalized on
+clean commit `77c2f5b7d23f56bf26f6fb4b6634ff3e14b09a96` before E7 development.
+
+## E7 - Dev retrieval evaluation and pre-test seal
+
+`app.retrieval_evaluator` owns SciFact document metrics and raw runs, separate from
+the E6 Atlas semantic grader. The evaluator calls the existing `DenseRetriever`
+once per query with depth 10 and derives Recall@5, Recall@10, MRR@10 and nDCG@10
+from that result. Serving Top-K remains 5; evaluation depth and maximum Top-K are
+10. Results must have unique document IDs, continuous ranks and descending finite
+scores. The evaluator never deduplicates or reranks a second time.
+
+Recall uses positive judgments and averages per-query recall. MRR uses the first
+positive hit. nDCG preserves fractional relevance with gain `2**rel - 1` and
+`log2(rank+1)` discount; equivalent gain scaling prevents overflow for large finite
+grades. A query with no positive judgments contributes zero to all four metrics
+and stays in the denominator. A per-query exception also contributes four zeros,
+records its error and does not stop later queries. Invalid global setup aborts
+without publishing a completed benchmark score.
+
+~~~powershell
+if ($env:USERNAME -ne 'Admin') { Write-Output "SKIP_PROFILE=$env:USERNAME"; exit 7 }
+python -m scripts.evaluate --split dev --config config.yaml --device cuda
+~~~
+
+The dev IDs are exactly `manifest.split.dev_ids` in canonical order, checked
+against the E1 train-derived Random(42) split. Dev evaluation and freeze validation
+never read `qrels/test.tsv`; its sealed expected hash remains E1 metadata. Runtime
+retrieval receives query text only, while query IDs, qrels and relevance grades
+stay in evaluator code. Neither final-test IDs nor their text are published by a
+pre-freeze evaluation. MiniLM uses its local cache only; `--cache-folder` and
+`--device` select the local runtime without changing the benchmark config.
+
+Each new immutable `artifacts/<run_id>/` contains:
+
+- `retrieval_run.jsonl`: one query-status row, followed by result rows in rank
+  order. An ERROR query has no fabricated document/rank row.
+- `failure_analysis.jsonl`: all objective candidates, ordered by lowest Recall@10,
+  then MRR@10, then numeric query ID. Categories are retrieval miss, partial recall,
+  ranking failure and retrieval error; zero-positive judgments are identified
+  separately. Every case records the observed output, a conservative root-cause
+  assessment limited to what the ranking proves, and a concrete dev-only next
+  improvement/diagnostic. It explicitly avoids claiming an unproven deeper embedding,
+  chunking or lexical cause.
+- `metrics.json`: completion summary published last, binding source/config,
+  metric policy, dataset/split/index identities, raw artifact hashes, denominator,
+  failure count and retrieval p50. UTF-8/LF files publish atomically per file and
+  strict JSON rejects NaN/Infinity. Existing run directories cannot be overwritten.
+
+Retrieval time covers each attempted call, including failures, and excludes setup.
+Generation timing references the canonical E6 summary with its own source/hash
+and is explicitly labelled Atlas fixture timing. E7 makes no Ministral calls.
+Exit codes are 0 completed without query errors, 2 completed with query errors,
+and 1 setup/provenance failure. Objective retrieval misses do not mean CLI failure.
+
+Normal dev evaluation never updates the canonical manifest. `--update-manifest`
+requires a clean committed tree and canonical E5/E6 from the same commit. The
+merge checks hashes, schemas, exact ordered 100-query membership, rank/score/doc
+contracts and chunk mapping, then independently recomputes all four metrics,
+failure count, timings and failure candidates from the raw run and train qrels.
+All E1–E6 sections are preserved. No threshold or retrieval setting is tuned here.
+
+After committing E7 and ensuring a clean source tree, finalize in this order:
+
+~~~powershell
+if ($env:USERNAME -ne 'Admin') { Write-Output "SKIP_PROFILE=$env:USERNAME"; exit 7 }
+python -m scripts.check_rag --config config.yaml --update-manifest
+python -m scripts.evaluate_generation --config config.yaml --cache-folder artifacts/e2-validation/model-cache --device cuda --update-manifest
+python -m scripts.evaluate --split dev --config config.yaml --device cuda --update-manifest
+python -m scripts.freeze_final_test --config config.yaml
+~~~
+
+Freeze is an explicit one-way pre-test operation, separate from test evaluation.
+It validates E1/E4/E5/E6/E7 on the same clean HEAD, independently verifies dev
+artifacts, and seals config, prompt, runtime/model/digest/quantization, retrieval,
+index, dataset/split, metric policy and canonical artifact identities. It preserves
+the runtime lock and sets `final_test_frozen=true` only at this explicit step.
+It does not read or score test qrels and does not mean the final test has completed.
+
+`--split test` checks the entire seal before accessing test judgments: exact frozen
+HEAD, clean tree and unchanged config/prompt/model/retrieval/index/dataset/artifacts.
+The complete seal and clean frozen HEAD are checked again after retrieval and before
+artifact publication, so source/baseline drift during the run fails closed. It never
+auto-freezes. Exact frozen reruns get new immutable run directories; test cannot
+update the dev canonical section. E7 implementation does not execute the official
+test or invoke the canonical freeze while source is dirty.
+
+E7 code/tests were produced with Codex assistance using standard-library metric
+math/provenance and existing production retrieval. No LLM judge, new dependency,
+SciFact rebuild, E8 report, or Junior retrieval/API feature was introduced.
+
+Observed post-audit development run `20261008T014755Z-b58365ec` on 2026-10-08 used all 100
+canonical dev IDs, one Top10 call each, with zero execution errors. Recall@5 was
+0.7216666667, Recall@10 0.8016666667, MRR@10 0.6056388889 and nDCG@10 0.6446432061.
+Retrieval p50 was 4.56 ms on MiniLM CUDA (`cuda:0`, RTX 5070); FAISS ran on CPU
+with 14 threads. Independent direct-formula recomputation matched the raw run.
+The exported 56 candidates comprise 19 retrieval misses, 2 partial recalls and
+35 ranking failures. The first five deterministic candidates are dev IDs 14, 15,
+95, 313 and 325; their full questions, judgments and retrieved ranks/scores are
+in `failure_analysis.jsonl`, and all 56 carry the bounded root-cause assessment and
+concrete dev-only improvement fields described above. These are observed results,
+never hardcoded targets or claims of deeper mechanism diagnosis.
+The canonical E6 generation p50 reference is 988.80 ms over six Atlas cases.
+Manifest and all three SciFact bundle hashes were unchanged. This run records
+`source_git_dirty=true`; it is development evidence, not canonical E7 provenance.
+No official final test was run and no final-test freeze was performed.
 
 ## Tests
 
@@ -853,13 +959,3 @@ explicit relock transitions, canonical profile hashing, loopback-only routing,
 observed Ollama metadata, deterministic request parameters, readiness,
 transport/timeouts, model unavailable/OOM, malformed responses and model
 mismatch.
-
-## Commands not implemented yet
-
-This remains a scaffold command until E7 is implemented:
-
-~~~powershell
-python -m scripts.evaluate --split dev --config config.yaml
-~~~
-
-Do not treat scaffold output as a benchmark result.

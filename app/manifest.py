@@ -829,7 +829,33 @@ def merge_e6_generation_manifest(existing: Mapping[str, object], *, config: AppC
     return merged
 
 
+def merge_e7_retrieval_manifest(existing: Mapping[str, object], *, config: AppConfig,
+                                verification: Mapping[str, object]) -> dict[str, object]:
+    """Preserve E1-E6; independently validate raw dev evidence before recording E7."""
+    from app.benchmark_manifest import verify_canonical_generation, verify_dev_artifact
+    verify_canonical_generation(existing, config)
+    section = verify_dev_artifact(existing, config=config, verification=verification)
+    if existing.get("freeze", {}).get("final_test_frozen") is True and existing.get("retrieval_benchmark") != section:
+        raise ManifestConflictError("Cannot replace canonical dev artifacts after final-test freeze")
+    merged = deepcopy(dict(existing))
+    merged["retrieval_benchmark"] = section
+    return merged
+
+
+def freeze_final_test_manifest(existing: Mapping[str, object], *, config: AppConfig) -> dict[str, object]:
+    from app.benchmark_manifest import freeze_manifest
+    return freeze_manifest(existing, config=config)
+
+
+def validate_final_test_gate(existing: Mapping[str, object], *, config: AppConfig) -> None:
+    from app.benchmark_manifest import validate_test_gate
+    validate_test_gate(existing, config=config)
+
+
 __all__ = [
+    "merge_e7_retrieval_manifest",
+    "freeze_final_test_manifest",
+    "validate_final_test_gate",
     "E5_CANONICAL_SMOKE_QUERY",
     "merge_e6_generation_manifest",
     "current_git_state",
