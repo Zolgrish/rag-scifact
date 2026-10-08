@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "scope": "E8_delivery_documentation_only",
+  "prepared_on": "2026-10-08",
+  "benchmark_commit": "c7711284c066c6ff4a3052a3366cbd826e819b63",
+  "freeze_identity_sha256": "57299e5bcf5e590698ee6689d3e446ee21c19eddd8a523062bc3b1abafaef6ac",
+  "delivery_commit": null,
+  "delivery_commit_note": "The delivery commit is the later Git commit containing E8 documentation. It is intentionally distinct from benchmark_commit; no hash is invented before the author commits.",
+  "canonical_e5": {
+    "path": "artifacts/20261008T020100Z-635c5b5b/rag_check.json",
+    "sha256": "e79f569f6ed472afee348e17d38a3fbbb0527d4dfce8c5c52846b7320d2d225b"
+  },
+  "canonical_e6": {
+    "path": "artifacts/20261008T020110Z-08ab60d0/generation_summary.json",
+    "sha256": "97aa33226a631485e41e402c2f484e0df7388f39842141a7c57fc3dbf16a78db"
+  },
+  "canonical_e7_dev": {
+    "path": "artifacts/20261008T020122Z-bb3c17a1/metrics.json",
+    "sha256": "3e02884e433b3fc68c48b5583b2e0695ef65c1f7cda4cb10f3cde2b7db26fc0e"
+  },
+  "official_test": {
+    "metrics": {
+      "path": "artifacts/20261008T020950Z-627514bd/metrics.json",
+      "sha256": "a233de1daf3a64b5f53a11d0bab5d6707427a3747b3040b35b1243403cd59298"
+    },
+    "retrieval_run": {
+      "path": "artifacts/20261008T020950Z-627514bd/retrieval_run.jsonl",
+      "sha256": "90fc136c4034764ba72c1da1bd7d87eb93123bf9ebdaf6ab66d8cd00f2c87906"
+    },
+    "failure_analysis": {
+      "path": "artifacts/20261008T020950Z-627514bd/failure_analysis.jsonl",
+      "sha256": "29a2f68bd2919208c71b8027b4f2c8c502fbaeb1c18bd8f7f1c13f4988b5f3b2"
+    }
+  },
+  "supporting_evidence": {
+    "canonical_generation_run": {
+      "path": "artifacts/20261008T020110Z-08ab60d0/generation_run.jsonl",
+      "sha256": "9b83351313d20682df6d1eac6c4e46d91366dfa9b3de9f087890adb289aa2fdc"
+    },
+    "canonical_dev_retrieval_run": {
+      "path": "artifacts/20261008T020122Z-bb3c17a1/retrieval_run.jsonl",
+      "sha256": "9420e90e4fc6b10ca689a502735be82705a1a131e58bb37196305cef4202152c"
+    },
+    "canonical_dev_failure_analysis": {
+      "path": "artifacts/20261008T020122Z-bb3c17a1/failure_analysis.jsonl",
+      "sha256": "33f5a6193af434206a8adfbaa301ba451060bddb8af526b604357eef778140df"
+    }
+  },
+  "protected_benchmark_files": {
+    "manifest": {
+      "path": "artifacts/manifest.json",
+      "sha256": "4822806e99587b3e26f1ac31c56dcfa63789436771bb56db9b0a3365e71fde9f"
+    },
+    "config": {
+      "path": "config.yaml",
+      "sha256": "27ca1ed02f376defce1d1853689e1f6cb42dd0c626f35104218c1a1951ddf893"
+    },
+    "scifact_index": {
+      "chunks.jsonl": {
+        "path": "indexes/scifact/chunks.jsonl",
+        "sha256": "877dd3a648c8b791487ca2a373953e0c4479bf2e2df8440c8d234afb4b583af1"
+      },
+      "index.faiss": {
+        "path": "indexes/scifact/index.faiss",
+        "sha256": "cc96c582d39b324a78e6fd7f1ce972bbe7f49b6cae8f062020834fc921d556c7"
+      },
+      "index_manifest.json": {
+        "path": "indexes/scifact/index_manifest.json",
+        "sha256": "c0206ff73cc0985079833acaef6d3ffa50e502de79c2c01721a4b9168cc285e2"
+      }
+    },
+    "unchanged_before_after_e8": true,
+    "verified_file_count": 104,
+    "verification_scope": "All pre-existing app/scripts/tests/specs source, data, indexes, AGENTS.md, config, environment example, dependency manifests, frozen manifest and all files in the four canonical/final run directories; bytecode excluded."
+  },
+  "report": {
+    "path": "reports/E8-core-report.md"
+  },
+  "demo": {
+    "path": "docs/E8-demo.md"
+  },
+  "README": {
+    "path": "README.md"
+  },
+  "software_validation": {
+    "environment": "Admin Windows environment, existing .venv; offline software tests, no benchmark execution",
+    "pytest": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest -q",
+      "passed": 243,
+      "subtests_passed": 300,
+      "exit_code": 0,
+      "duration_s": 7.26
+    },
+    "unittest": {
+      "command": ".\\.venv\\Scripts\\python.exe -m unittest discover -s tests -q",
+      "tests_run": 243,
+      "status": "OK",
+      "exit_code": 0,
+      "duration_s": 6.579
+    },
+    "targeted_core_acceptance": {
+      "files": [
+        "tests/test_e1_loader.py",
+        "tests/test_e2_chunker.py",
+        "tests/test_e2_embedder.py",
+        "tests/test_e3_indexer.py",
+        "tests/test_e3_retriever.py",
+        "tests/test_e4_generator.py",
+        "tests/test_e5_citations.py",
+        "tests/test_e5_rag.py",
+        "tests/test_e6_fixture.py",
+        "tests/test_e6_grader.py",
+        "tests/test_e6_runner.py",
+        "tests/test_e7_metrics.py"
+      ],
+      "passed": 123,
+      "subtests_passed": 196,
+      "exit_code": 0,
+      "duration_s": 1.29
+    },
+    "compileall": {
+      "command": ".\\.venv\\Scripts\\python.exe -m compileall -q app scripts tests",
+      "exit_code": 0
+    },
+    "pip_check": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pip check",
+      "exit_code": 0,
+      "result": "No broken requirements found."
+    },
+    "attempt_note": "Initial sandboxed pytest stopped at collection with 9 errors from native FAISS DLL initialization and Windows invalid-handle exceptions. The identical command passed in the normal Admin environment; no application changes were made."
+  },
+  "report_layout_validation": {
+    "pages": 5,
+    "paper": "A4 portrait",
+    "body_font_pt": 11,
+    "table_font_pt": 9.5,
+    "margin_mm": 20,
+    "method": "Temporary PDF rendered with preinstalled Codex bundled ReportLab; no project dependency changes",
+    "canonical_source": "reports/E8-core-report.md",
+    "all_five_pages_visually_checked": true
+  },
+  "e8_actions": {
+    "official_test_rerun": false,
+    "benchmark_rerun": false,
+    "freeze_changed": false,
+    "benchmark_settings_changed": false,
+    "runtime_source_changed": false,
+    "git_staging_commit_push_performed": false
+  }
+}
